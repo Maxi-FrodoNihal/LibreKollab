@@ -10,6 +10,11 @@ services:
       - minio-data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   libreoffice:
     build:
@@ -20,6 +25,11 @@ services:
     volumes:
       - workspace:/workspace
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat /dev/null > /dev/tcp/localhost/2002"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   liberekollab:
     build: .
@@ -39,8 +49,15 @@ services:
     volumes:
       - workspace:/workspace
     depends_on:
-      - libreoffice
-      - minio
+      libreoffice:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/kollab/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   internal:
