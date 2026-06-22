@@ -22,22 +22,24 @@ LibreOffice headless      document storage
 ```
 org.msc.liberekollab
 ├── abstrakt/           # Interfaces: IOAPI, KollabAPI
-├── controller/         # DocumentController, KollabController
+├── controller/         # IOController, KollabController
 ├── storage/            # MinioObject
 ├── model/              # TextAnchor, Comment, Change, ChangeAction, ChangeStatus
 ├── request/            # AddCommentRequest, UpdateCommentRequest, EditTextRequest
 ├── response/           # Response data classes
 ├── LibereKollab.kt     # KollabAPI implementation (UNO)
-└── Main.kt
+├── KtorServer.kt       # Server setup (plugins, routing, Swagger)
+└── Main.kt             # Entrypoint — calls KtorServer().start()
 ```
 
 ## Key design rules
 
-- **DDD port/adapter separation**: never reference `MinioObject` or `LibereKollab` directly except in `Main.kt` and tests. Use `IOAPI` and `KollabAPI` everywhere else.
+- **DDD port/adapter separation**: never reference `MinioObject` or `LibereKollab` directly except in `KtorServer.kt` and tests. Use `IOAPI` and `KollabAPI` everywhere else.
 - All classes that talk to external systems must support constructor injection so tests can pass container coordinates. The no-arg constructor reads from `.env` via dotenv-kotlin.
 - `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests.
 - No test tags, no separate source sets — all tests live in `src/test/kotlin/`.
 - Controller route handlers are extracted as `private suspend fun RoutingContext.xxx()` — never inline lambdas in `registerRoutes`.
+- Route registration uses `io.github.smiley4.ktoropenapi` HTTP method imports (`get`, `post`, `patch`, `delete`) — these shadow Ktor's built-in equivalents and accept an optional documentation lambda as second parameter.
 
 ## Workspace flow
 
@@ -134,7 +136,28 @@ Then run `Main.kt` from IntelliJ. LibreOffice is reachable at `localhost:2002`, 
 docker compose up --build
 ```
 
-App, LibreOffice, and MinIO all start as separate containers with a shared workspace volume.
+App, LibreOffice, and MinIO all start as separate containers with a shared workspace volume. All three are on an isolated Docker bridge network — only `liberekollab` exposes port 8080 to the host. MinIO and LibreOffice have no `ports:` mappings and are unreachable from outside.
+
+## Swagger / OpenAPI
+
+The OpenAPI spec and Swagger UI are auto-generated from route definitions at startup using `io.github.smiley4:ktor-openapi:5.0.0` and `io.github.smiley4:ktor-swagger-ui:5.0.0`.
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/swagger/index.html` | Swagger UI |
+| `http://localhost:8080/swagger` | Redirects to Swagger UI |
+| `http://localhost:8080/api.json` | Raw OpenAPI JSON spec |
+
+Route documentation is declared inline in `registerRoutes` via the ktor-openapi DSL — no separate YAML file to maintain. Each route has a documentation lambda:
+
+```kotlin
+get("/path", {
+    tags = listOf("Tag")
+    summary = "Short description"
+    request { pathParameter<String>("id") { } }
+    response { code(HttpStatusCode.OK) { body<ResponseType>() } }
+}) { handler() }
+```
 
 ## Tests
 
@@ -145,7 +168,7 @@ Integration tests use Testcontainers 2.0.5 (required for Docker 29.x — older v
 ```
 
 - **`LibereKollabIT`** — tests KollabAPI directly (LibreOffice + MinIO containers, workspace bind-mounted)
-- **`DocumentControllerIT`** — tests all DocumentController routes via Ktor `testApplication` (MinIO container, fresh bucket per test)
+- **`IOControllerIT`** — tests all IOController routes via Ktor `testApplication` (MinIO container, fresh bucket per test)
 
 The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`) and a fixed workspace path so `withReuse(true)` actually works — subsequent test runs reuse the running container instead of rebuilding.
 
@@ -207,6 +230,22 @@ The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-tes
 ## What is still missing (planned)
 
 - Error handling for UNO connection failures and document load errors
+
+### Logging Decorator
+
+Add `LoggingKollabAPI(delegate: KollabAPI) : KollabAPI` and `LoggingIOAPI(delegate: IOAPI) : IOAPI` — wrap the interfaces, log each call (method + parameters + duration), delegate to the real implementation. In `KtorServer.kt`, wrap `LibereKollab()` and `MinioObject()` with the decorators.
+
+### RichText — Text formatting properties
+
+Text-returning methods (`getText`, `getTextByPages`, `getTextByChapter`) currently return plain `String`. Replace with `RichText`:
+
+```kotlin
+enum class SpanType { BOLD, ITALIC, UNDERLINE, STRIKETHROUGH }
+data class TextSpan(val from: Int, val to: Int, val type: SpanType)
+data class RichText(val text: String, val spans: List<TextSpan>)
+```
+
+UNO implementation: enumerate text portions, read `CharWeight`, `CharPosture`, `CharUnderline`, `CharStrikeout` properties to build the span list alongside the text string.
 
 ## Environment variables (`.env`)
 
