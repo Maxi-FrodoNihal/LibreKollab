@@ -1,7 +1,7 @@
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /app
 COPY . .
-RUN ./gradlew build --no-daemon -x test
+RUN chmod +x gradlew && ./gradlew build --no-daemon -x test
 
 FROM eclipse-temurin:25-jre
 WORKDIR /app

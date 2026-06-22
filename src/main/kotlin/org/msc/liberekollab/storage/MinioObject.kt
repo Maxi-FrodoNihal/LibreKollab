@@ -15,7 +15,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
-class MinioStorage(
+class MinioObject(
     host: String,
     port: Int,
     accessKey: String,

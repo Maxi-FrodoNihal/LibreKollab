@@ -10,22 +10,20 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.routing.*
 import io.ktor.server.testing.*
 import kotlinx.serialization.json.Json
-import org.msc.liberekollab.controller.DocumentController
+import org.assertj.core.api.Assertions.assertThat
+import org.msc.liberekollab.controller.IOController
 import org.msc.liberekollab.response.ListDocumentsResponse
 import org.msc.liberekollab.response.UploadResponse
-import org.msc.liberekollab.storage.MinioStorage
+import org.msc.liberekollab.storage.MinioObject
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.util.UUID
 import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 @Testcontainers
-class DocumentControllerIT {
+class IOControllerIT {
 
     companion object {
         @Container
@@ -39,7 +37,7 @@ class DocumentControllerIT {
     }
 
     private fun withDocumentController(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        val storage = MinioStorage(
+        val storage = MinioObject(
             host = minio.host,
             port = minio.getMappedPort(9000),
             accessKey = "minioadmin",
@@ -48,7 +46,7 @@ class DocumentControllerIT {
         )
         application {
             install(ContentNegotiation) { json() }
-            routing { DocumentController(storage).registerRoutes(this) }
+            routing { IOController(storage).registerRoutes(this) }
         }
         block()
     }
@@ -68,13 +66,13 @@ class DocumentControllerIT {
     }
 
     @Test
-    fun `health check antwortet healthy`() = withDocumentController {
+    fun `health check returns healthy`() = withDocumentController {
         val response = client.get("/documents/health")
-        assertEquals(HttpStatusCode.OK, response.status)
+        assertThat(response.status).isEqualTo(HttpStatusCode.OK)
     }
 
     @Test
-    fun `upload gibt documentId zurück`() = withDocumentController {
+    fun `upload returns documentId`() = withDocumentController {
         val response = client.post("/documents/upload") {
             setBody(MultiPartFormDataContent(formData {
                 append("file", odtBytes(), Headers.build {
@@ -83,40 +81,40 @@ class DocumentControllerIT {
                 })
             }))
         }
-        assertEquals(HttpStatusCode.Created, response.status)
+        assertThat(response.status).isEqualTo(HttpStatusCode.Created)
         val body = Json.decodeFromString<UploadResponse>(response.bodyAsText())
-        assertTrue(body.documentId.isNotBlank())
+        assertThat(body.documentId).isNotBlank()
     }
 
     @Test
-    fun `ls listet hochgeladenes Dokument`() = withDocumentController {
+    fun `list includes uploaded document`() = withDocumentController {
         val documentId = uploadHalloOdt()
 
         val response = client.get("/documents")
-        assertEquals(HttpStatusCode.OK, response.status)
+        assertThat(response.status).isEqualTo(HttpStatusCode.OK)
         val body = Json.decodeFromString<ListDocumentsResponse>(response.bodyAsText())
-        assertTrue(body.documents.any { it.startsWith(documentId) })
+        assertThat(body.documents).anyMatch { it.startsWith(documentId) }
     }
 
     @Test
-    fun `download gibt hochgeladenes Dokument zurück`() = withDocumentController {
+    fun `download returns uploaded document`() = withDocumentController {
         val documentId = uploadHalloOdt()
 
         val response = client.get("/documents/$documentId")
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(ContentType.Application.OctetStream, response.contentType())
-        assertTrue(response.readBytes().isNotEmpty())
+        assertThat(response.status).isEqualTo(HttpStatusCode.OK)
+        assertThat(response.contentType()).isEqualTo(ContentType.Application.OctetStream)
+        assertThat(response.readBytes()).isNotEmpty()
     }
 
     @Test
-    fun `delete entfernt Dokument aus der Liste`() = withDocumentController {
+    fun `delete removes document from list`() = withDocumentController {
         val documentId = uploadHalloOdt()
 
         val deleteResponse = client.delete("/documents/$documentId")
-        assertEquals(HttpStatusCode.NoContent, deleteResponse.status)
+        assertThat(deleteResponse.status).isEqualTo(HttpStatusCode.NoContent)
 
         val listResponse = client.get("/documents")
         val body = Json.decodeFromString<ListDocumentsResponse>(listResponse.bodyAsText())
-        assertFalse(body.documents.any { it.startsWith(documentId) })
+        assertThat(body.documents).noneMatch { it.startsWith(documentId) }
     }
 }

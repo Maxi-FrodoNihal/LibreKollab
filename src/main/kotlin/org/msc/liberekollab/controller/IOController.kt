@@ -1,5 +1,8 @@
 package org.msc.liberekollab.controller
 
+import io.github.smiley4.ktoropenapi.delete
+import io.github.smiley4.ktoropenapi.get
+import io.github.smiley4.ktoropenapi.post
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.request.*
@@ -12,18 +15,51 @@ import org.msc.liberekollab.response.UploadResponse
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
-class DocumentController(private val storage: IOAPI) {
+class IOController(private val storage: IOAPI) {
 
     companion object {
         private const val DEFAULT_FILE_NAME = "document"
     }
 
     fun registerRoutes(routing: Routing) {
-        routing.get("/documents/health") { healthCheck() }
-        routing.post("/documents/upload") { upload() }
-        routing.get("/documents") { list() }
-        routing.get("/documents/{id}") { download() }
-        routing.delete("/documents/{id}") { delete() }
+        routing.get("/documents/health", {
+            tags = listOf("Documents")
+            summary = "Health check"
+            response { code(HttpStatusCode.OK) { description = "Service is healthy" } }
+        }) { healthCheck() }
+
+        routing.post("/documents/upload", {
+            tags = listOf("Documents")
+            summary = "Upload a document"
+            request {
+                body<ByteArray> { description = "ODT file (multipart/form-data)" }
+            }
+            response { code(HttpStatusCode.Created) { body<UploadResponse>() } }
+        }) { upload() }
+
+        routing.get("/documents", {
+            tags = listOf("Documents")
+            summary = "List all document IDs"
+            response { code(HttpStatusCode.OK) { body<ListDocumentsResponse>() } }
+        }) { list() }
+
+        routing.get("/documents/{id}", {
+            tags = listOf("Documents")
+            summary = "Download a document"
+            request { pathParameter<String>("id") { } }
+            response {
+                code(HttpStatusCode.OK) {
+                    body<ByteArray> { description = "Raw document bytes (application/octet-stream)" }
+                }
+            }
+        }) { download() }
+
+        routing.delete("/documents/{id}", {
+            tags = listOf("Documents")
+            summary = "Delete a document"
+            request { pathParameter<String>("id") { } }
+            response { code(HttpStatusCode.NoContent) { description = "Document deleted" } }
+        }) { delete() }
     }
 
     private suspend fun RoutingContext.upload() {
@@ -53,27 +89,23 @@ class DocumentController(private val storage: IOAPI) {
 
     private suspend fun RoutingContext.download() {
         val id = verifyForBadRequest("id") ?: return
-
         val out = storage.download(id) as ByteArrayOutputStream
         call.respondBytes(out.toByteArray(), ContentType.Application.OctetStream)
     }
 
     private suspend fun RoutingContext.delete() {
         val id = verifyForBadRequest("id") ?: return
-
         storage.delete(id)
         call.respond(HttpStatusCode.NoContent)
     }
 
     private suspend fun RoutingContext.verifyForBadRequest(paramName: String): String? {
         val value = call.parameters[paramName]
-        if (value == null) {
-            call.respond(HttpStatusCode.BadRequest)
-        }
+        if (value == null) call.respond(HttpStatusCode.BadRequest)
         return value
     }
 
-    private suspend fun RoutingContext.healthCheck(){
+    private suspend fun RoutingContext.healthCheck() {
         call.respond("healthy")
     }
 }

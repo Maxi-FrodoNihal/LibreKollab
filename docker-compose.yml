@@ -1,9 +1,8 @@
 services:
   minio:
     image: minio/minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    networks:
+      - internal
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -16,8 +15,8 @@ services:
     build:
       context: .
       dockerfile: docker/libreoffice/Dockerfile
-    ports:
-      - "2002:2002"
+    networks:
+      - internal
     volumes:
       - workspace:/workspace
     restart: unless-stopped
@@ -26,6 +25,8 @@ services:
     build: .
     ports:
       - "8080:8080"
+    networks:
+      - internal
     environment:
       LIBREOFFICE_HOST: libreoffice
       LIBREOFFICE_PORT: 2002
@@ -40,6 +41,11 @@ services:
     depends_on:
       - libreoffice
       - minio
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
 
 volumes:
   minio-data:

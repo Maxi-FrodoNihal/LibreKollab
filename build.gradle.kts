@@ -26,6 +26,8 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+    implementation("io.github.smiley4:ktor-openapi:5.0.0")
+    implementation("io.github.smiley4:ktor-swagger-ui:5.0.0")
     implementation("ch.qos.logback:logback-classic:1.5.18")
     implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
     implementation("io.minio:minio:9.0.3")
@@ -35,6 +37,7 @@ dependencies {
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion")
+    testImplementation("org.assertj:assertj-core:3.27.3")
 }
 
 application {
