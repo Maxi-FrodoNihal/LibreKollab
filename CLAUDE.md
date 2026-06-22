@@ -1,0 +1,176 @@
+# LibereKollab
+
+Kotlin/Ktor REST API that exposes LibreOffice document editing via UNO as an AI-usable tool interface. An AI agent can read text, navigate chapters/pages, read and add comments — all via HTTP.
+
+## Architecture
+
+```
+HTTP Client / AI Agent
+        │
+   Ktor REST API (port 8080)
+        │
+   ┌────┴─────────────────┐
+   │                       │
+UNO socket (port 2002)   MinIO (port 9000)
+LibreOffice headless      document storage
+```
+
+**Scaling model:** one Kubernetes Pod (Ktor + LibreOffice sidecar) per open document. MinIO is shared centrally. The `limitedParallelism(1)` dispatcher in `LibereKollab` serializes all UNO calls — LibreOffice is not thread-safe.
+
+## Package structure
+
+```
+org.msc.liberekollab
+├── abstrakt/           # Interfaces: IOAPI, KollabAPI
+├── controller/         # DocumentController, KollabController
+├── storage/            # MinioStorage
+├── model/              # Domain models: TextAnchor, Comment
+├── request/            # Request data classes: AddCommentRequest
+├── response/           # Response data classes
+├── LibereKollab.kt     # KollabAPI implementation (UNO)
+└── Main.kt
+```
+
+## Key design rules
+
+- **DDD port/adapter separation**: never reference `MinioStorage` or `LibereKollab` directly except in `Main.kt` and tests. Use `IOAPI` and `KollabAPI` everywhere else.
+- All classes that talk to external systems must support constructor injection so tests can pass container coordinates. The no-arg constructor reads from `.env` via dotenv-kotlin.
+- `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests.
+- No test tags, no separate source sets — all tests live in `src/test/kotlin/`.
+- Controller route handlers are extracted as `private suspend fun RoutingContext.xxx()` — never inline lambdas in `registerRoutes`.
+
+## Workspace flow
+
+`LibereKollab` downloads from MinIO → writes to `WORKSPACE_PATH` → passes path to LibreOffice via UNO → deletes temp file.
+
+- **Read-only** (`getText`, `getPageCount`, etc.): use `withDocument` → calls `withWorkspaceFile` — temp file deleted after block
+- **Mutating** (`addComment`, etc.): use `withDocumentMutating` → calls `withWorkspaceFileAndWriteback` — calls `XStorable.store()` then uploads back to MinIO before deleting
+
+Object names in MinIO are `"${documentId}_${fileName}"`. `IOAPI.nextId()` generates the UUID; `upload(documentId, fileName, stream)` stores the object and returns the `documentId`.
+
+## Edit mode / Track Changes
+
+All mutating operations must run with LibreOffice Track Changes enabled (`RecordChanges = true`). The helper `withEnsuredEditMode(documentId)` checks the current state and enables it if needed before handing off to `withDocumentMutating`.
+
+```
+withEnsuredEditMode(documentId) {       // checks + enables RecordChanges if off
+    withDocumentMutating(documentId) {  // loads, runs block, XStorable.store(), uploads
+        // UNO mutations here
+    }
+}
+```
+
+- `setEditMode` / `getEditMode` are part of `KollabAPI` but **not exposed via HTTP** — `setEditMode` is called implicitly by `withEnsuredEditMode`.
+- `GET /kollab/text/{documentId}/editmode` is the only HTTP endpoint for edit mode (read-only).
+
+## Comments (UNO annotations)
+
+Comments are LibreOffice annotations (`com.sun.star.text.TextField.Annotation`) anchored to a `TextAnchor`.
+
+**`TextAnchor`** (`model/`) is the domain PK for a text position:
+- `text` — the anchored string
+- `paragraphIndex` — 0-based paragraph index in document order
+- `charStart` / `charEnd` — character offsets within the paragraph
+- `toHash()` — SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"` → used as `Comment.id`
+
+**`Comment`** (`model/`) holds `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
+
+**Reading** (`getComments`): uses `XTextFieldsSupplier`, filters for the Annotation service, builds `TextAnchor` by creating a cursor from doc start to anchor start and counting `\n` characters. Results are sorted by `(paragraphIndex, charStart)`.
+
+**Writing** (`addComment`): resolves the anchor range by walking paragraphs to `paragraphIndex` then using `goRight`, creates the annotation field via `XMultiServiceFactory`, sets `Content`, `Author`, and `DateTimeValue` (must be set explicitly — LibreOffice does not auto-fill it via UNO). Uses `absorb = true` in `insertTextContent` to create a range annotation (not a collapsed point annotation).
+
+## UNO / LibreOffice JAR
+
+`libs/uno/libreoffice.jar` is copied from the host LibreOffice installation:
+
+```bash
+cp /usr/lib/libreoffice/program/classes/libreoffice.jar libs/uno/
+```
+
+Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. The old individual JARs (`ridl.jar`, `jurt.jar`, etc.) are empty stubs — do not use them.
+
+## Running locally (dev)
+
+Start MinIO + LibreOffice:
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+Then run `Main.kt` from IntelliJ. LibreOffice is reachable at `localhost:2002`, MinIO at `localhost:9000`. Configuration is read from `.env`.
+
+## Running in Docker
+
+```bash
+docker compose up --build
+```
+
+App, LibreOffice, and MinIO all start as separate containers with a shared workspace volume.
+
+## Tests
+
+Integration tests use Testcontainers 2.0.5 (required for Docker 29.x — older versions hardcode Docker API ≤1.32). Container reuse is enabled via `src/test/resources/testcontainers.properties`.
+
+```bash
+./gradlew test
+```
+
+- **`LibereKollabIT`** — tests KollabAPI directly (LibreOffice + MinIO containers, workspace bind-mounted)
+- **`DocumentControllerIT`** — tests all DocumentController routes via Ktor `testApplication` (MinIO container, fresh bucket per test)
+
+## API
+
+### Document storage (`/documents`)
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/documents/health` | Health check |
+| `POST` | `/documents/upload` | Multipart upload → returns `documentId` |
+| `GET` | `/documents` | List all document IDs |
+| `GET` | `/documents/{id}` | Download raw bytes |
+| `DELETE` | `/documents/{id}` | Delete document |
+
+### Kollab (`/kollab`)
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/kollab/health` | Health check |
+| `GET` | `/kollab/text/{documentId}` | Full document text |
+| `GET` | `/kollab/text/{documentId}/pagecount` | Number of pages |
+| `GET` | `/kollab/text/{documentId}/chapters` | List chapter headings |
+| `GET` | `/kollab/text/{documentId}/pages/{fromPage}/{toPage}` | Text of page range |
+| `GET` | `/kollab/text/{documentId}/chapters/{chapter}` | Text of a chapter |
+| `GET` | `/kollab/text/{documentId}/comments` | List all comments |
+| `POST` | `/kollab/text/{documentId}/comments` | Add a comment (body: `AddCommentRequest`) |
+| `GET` | `/kollab/text/{documentId}/editmode` | Check if Track Changes is active |
+
+### `AddCommentRequest`
+
+```json
+{
+  "commentText": "...",
+  "author": "...",
+  "anchor": {
+    "text": "...",
+    "paragraphIndex": 0,
+    "charStart": 7,
+    "charEnd": 20
+  }
+}
+```
+
+## What is still missing (planned)
+
+- Error handling for UNO connection failures and document load errors
+
+## Environment variables (`.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `LIBREOFFICE_HOST` | `localhost` | UNO socket host |
+| `LIBREOFFICE_PORT` | `2002` | UNO socket port |
+| `MINIO_HOST` | `localhost` | MinIO host |
+| `MINIO_PORT` | `9000` | MinIO API port |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO credentials |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO credentials |
+| `MINIO_BUCKET` | `documents` | Bucket name |
+| `WORKSPACE_PATH` | `/tmp/liberekollab` | Shared volume path (app side) |

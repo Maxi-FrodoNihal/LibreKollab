@@ -1,0 +1,46 @@
+services:
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  libreoffice:
+    build:
+      context: .
+      dockerfile: docker/libreoffice/Dockerfile
+    ports:
+      - "2002:2002"
+    volumes:
+      - workspace:/workspace
+    restart: unless-stopped
+
+  liberekollab:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      LIBREOFFICE_HOST: libreoffice
+      LIBREOFFICE_PORT: 2002
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: documents
+      WORKSPACE_PATH: /workspace
+    volumes:
+      - workspace:/workspace
+    depends_on:
+      - libreoffice
+      - minio
+
+volumes:
+  minio-data:
+  workspace:
