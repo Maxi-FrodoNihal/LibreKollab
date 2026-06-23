@@ -10,6 +10,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.http.ContentType
 import io.ktor.serialization.kotlinx.json.*
 import org.msc.liberekollab.domain.port.IOAPI
 import org.msc.liberekollab.domain.port.KollabAPI
@@ -49,6 +50,10 @@ class KtorServer(
             route("api.json") { openApi() }
             get("swagger") { call.respondRedirect("/swagger/index.html") }
             route("swagger") { swaggerUI("/api.json") }
+            get("guide") {
+                val text = object {}.javaClass.getResourceAsStream("/guide.md")!!.bufferedReader().readText()
+                call.respondText(text, ContentType.Text.Plain)
+            }
             KollabController(kollab).registerRoutes(this)
             IOController(io).registerRoutes(this)
         }

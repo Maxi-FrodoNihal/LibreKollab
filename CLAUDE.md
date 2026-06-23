@@ -21,25 +21,58 @@ LibreOffice headless      document storage
 
 ```
 org.msc.liberekollab
-├── abstrakt/           # Interfaces: IOAPI, KollabAPI
-├── controller/         # IOController, KollabController
-├── storage/            # MinioObject
-├── model/              # TextAnchor, Comment, Change, ChangeAction, ChangeStatus
-├── request/            # AddCommentRequest, UpdateCommentRequest, EditTextRequest
-├── response/           # Response data classes
-├── LibereKollab.kt     # KollabAPI implementation (UNO)
-├── KtorServer.kt       # Server setup (plugins, routing, Swagger)
-└── Main.kt             # Entrypoint — calls KtorServer().start()
+├── domain/
+│   ├── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
+│   │   ├── change/
+│   │   └── text/
+│   │       └── properties/
+│   └── port/           # IOAPI, KollabAPI
+├── adapter/
+│   ├── http/           # KtorServer
+│   │   ├── controller/ # IOController, KollabController
+│   │   ├── request/    # AddCommentRequest, UpdateCommentRequest, EditTextRequest
+│   │   └── response/   # Response data classes
+│   ├── uno/            # LibereKollab
+│   ├── minio/          # MinioAdapter
+│   └── logging/        # LoggingKollabAPI, LoggingIOAPI
+└── Main.kt             # Entrypoint — composition root
 ```
 
-## Key design rules
+## Coding guidelines
 
-- **DDD port/adapter separation**: never reference `MinioObject` or `LibereKollab` directly except in `KtorServer.kt` and tests. Use `IOAPI` and `KollabAPI` everywhere else.
-- All classes that talk to external systems must support constructor injection so tests can pass container coordinates. The no-arg constructor reads from `.env` via dotenv-kotlin.
-- `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests.
-- No test tags, no separate source sets — all tests live in `src/test/kotlin/`.
-- Controller route handlers are extracted as `private suspend fun RoutingContext.xxx()` — never inline lambdas in `registerRoutes`.
-- Route registration uses `io.github.smiley4.ktoropenapi` HTTP method imports (`get`, `post`, `patch`, `delete`) — these shadow Ktor's built-in equivalents and accept an optional documentation lambda as second parameter.
+### DDD / Package rules
+
+- `domain/` has zero imports from `adapter/` — domain model and ports are framework-agnostic
+- Adapters import from `domain/port/` and `domain/model/` only — never from other adapters
+- `Main.kt` is the only composition root: the only place that instantiates concrete adapters and wires them together
+- Never reference `MinioAdapter` or `LibereKollab` outside `Main.kt` and tests — use `IOAPI` / `KollabAPI`
+- All classes that talk to external systems support constructor injection so tests can pass container coordinates. The no-arg constructor reads from `.env` via dotenv-kotlin
+
+### Kotlin style
+
+- Block body `{ }` for `Unit`-returning functions — expression body `= expr` infers the last expression's type; JUnit rejects `@Test` methods that return non-`Unit`
+- `data class` for value objects; `sealed interface` for polymorphic domain types (e.g. `TextProperty`)
+- Values always computable from other fields must not be nullable — use a default parameter instead (e.g. `TextAnchor.id`)
+- No comments unless the WHY is non-obvious; never describe WHAT the code does
+
+### I/O and concurrency
+
+- All methods on `IOAPI` that touch the network are `suspend` — wrap blocking SDK calls in `withContext(Dispatchers.IO)`
+- `nextId()` on `IOAPI` is NOT `suspend` — pure UUID generation, no I/O
+- UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `LibereKollab` — never call UNO from multiple coroutines concurrently
+- `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests
+
+### HTTP layer
+
+- Controller route handlers are extracted as `private suspend fun RoutingContext.xxx()` — never inline lambdas in `registerRoutes`
+- Route registration uses `io.github.smiley4.ktoropenapi` HTTP method imports (`get`, `post`, `patch`, `delete`) — these shadow Ktor's built-in equivalents and accept an optional documentation lambda as second parameter
+
+### Testing
+
+- All integration tests use real containers (Testcontainers) and a real Netty server — no `testApplication`, no mocks
+- Shared infrastructure per test class: containers, `KtorServer`, and `HttpClient` initialized once via `by lazy`, started in `@BeforeAll`, stopped in `@AfterAll`
+- Tests are isolated by unique `documentId` — a shared MinIO bucket per test class is sufficient
+- Use `isBetween` for datetime ranges derived from known test data; use exact equality for content assertions
 
 ## Workspace flow
 
@@ -80,36 +113,55 @@ withEnsuredEditMode(documentId) {       // checks + enables RecordChanges if off
 
 When `editText` runs, LibreOffice records a Delete redline (original text) and an Insert redline (new text). These are exposed via:
 
-- **`ChangeAction`** (`model/`) — enum: `INSERT`, `DELETE`
-- **`ChangeStatus`** (`model/`) — enum controlling which text variant is returned:
+- **`ChangeAction`** (`domain/model/change/`) — enum: `INSERT`, `DELETE`
+- **`ChangeStatus`** (`domain/model/change/`) — enum controlling which text variant is returned:
   - `BEFORE` — original text (insertions hidden, deletions visible)
   - `FUSION` — raw LibreOffice string including both deleted and inserted text (default)
   - `AFTER` — text with changes applied (deletions hidden, insertions visible)
-- **`Change`** (`model/`) — holds `action: ChangeAction`, `author`, `dateTime`, `text`, `anchor: TextAnchor`
+- **`Change`** (`domain/model/change/`) — holds `action: ChangeAction`, `author`, `dateTime`, `text`, `anchor: TextAnchor`
 
 Text-reading endpoints accept `?changeStatus=BEFORE|FUSION|AFTER` as a query parameter (default: `FUSION`).
 
 Accept/reject tracked changes is intentionally **not in the API** — that is a human editorial decision made directly in LibreOffice.
 
+## Text and formatting
+
+Text-returning methods return `MarkedText` (`domain/model/text/`):
+
+```kotlin
+data class MarkedText(val text: String, val properties: List<TextProperty> = emptyList())
+```
+
+`TextProperty` is a sealed interface with `MarkIndex(paragraphIndex, from, to)` indicating the character range:
+
+```kotlin
+data class BoldProperty(val markIndex: MarkIndex) : TextProperty
+data class ItalicProperty(val markIndex: MarkIndex) : TextProperty
+data class UnderlineProperty(val markIndex: MarkIndex) : TextProperty
+data class StrikethroughProperty(val markIndex: MarkIndex) : TextProperty
+```
+
+UNO implementation: enumerate text portions, read `CharWeight`, `CharPosture`, `CharUnderline`, `CharStrikeout` properties to build the property list alongside the text string.
+
 ## Comments (UNO annotations)
 
 Comments are LibreOffice annotations (`com.sun.star.text.TextField.Annotation`) anchored to a `TextAnchor`.
 
-**`TextAnchor`** (`model/`) is the domain PK for a text position:
+**`TextAnchor`** (`domain/model/`) is the domain PK for a text position:
 - `text` — the anchored string
 - `paragraphIndex` — 0-based paragraph index in document order
 - `charStart` / `charEnd` — character offsets within the paragraph
-- `toHash()` — SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"` → used as `Comment.id`
+- `id` — always computed: 12-char SHA-256 truncation of `"$text:$paragraphIndex:$charStart:$charEnd"` → used as `Comment.id`
 
-**`Comment`** (`model/`) holds `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
+**`Comment`** (`domain/model/`) holds `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
 
 **Reading** (`getComments`): uses `XTextFieldsSupplier`, filters for the Annotation service, builds `TextAnchor` by creating a cursor from doc start to anchor start and counting `\n` characters. Results are sorted by `(paragraphIndex, charStart)`.
 
 **Writing** (`addComment`): resolves the anchor range by walking paragraphs to `paragraphIndex` then using `goRight`, creates the annotation field via `XMultiServiceFactory`, sets `Content`, `Author`, and `DateTimeValue` (must be set explicitly — LibreOffice does not auto-fill it via UNO). Uses `absorb = true` in `insertTextContent` to create a range annotation (not a collapsed point annotation).
 
-**Updating** (`updateComment`): enumerates annotations, matches by anchor hash, sets `Content` and updates `DateTimeValue` to now. Throws `NoSuchElementException` if not found.
+**Updating** (`updateComment`): enumerates annotations, matches by anchor id, sets `Content` and updates `DateTimeValue` to now. Throws `NoSuchElementException` if not found.
 
-**Deleting** (`deleteComment`): enumerates annotations, matches by anchor hash, calls `XText.removeTextContent`. Throws `NoSuchElementException` if not found.
+**Deleting** (`deleteComment`): enumerates annotations, matches by anchor id, calls `XText.removeTextContent`. Throws `NoSuchElementException` if not found.
 
 ## UNO / LibreOffice JAR
 
@@ -147,6 +199,7 @@ The OpenAPI spec and Swagger UI are auto-generated from route definitions at sta
 | `http://localhost:8080/swagger/index.html` | Swagger UI |
 | `http://localhost:8080/swagger` | Redirects to Swagger UI |
 | `http://localhost:8080/api.json` | Raw OpenAPI JSON spec |
+| `http://localhost:8080/guide` | AI tool usage guide (plain text Markdown) |
 
 Route documentation is declared inline in `registerRoutes` via the ktor-openapi DSL — no separate YAML file to maintain. Each route has a documentation lambda:
 
@@ -167,8 +220,10 @@ Integration tests use Testcontainers 2.0.5 (required for Docker 29.x — older v
 ./gradlew test
 ```
 
-- **`LibereKollabIT`** — tests KollabAPI directly (LibreOffice + MinIO containers, workspace bind-mounted)
-- **`IOControllerIT`** — tests all IOController routes via Ktor `testApplication` (MinIO container, fresh bucket per test)
+- **`KollabControllerIT`** — tests all KollabController routes via real Netty server + `HttpClient` (LibreOffice + MinIO containers, workspace bind-mounted)
+- **`IOControllerIT`** — tests all IOController routes via real Netty server + `HttpClient` (MinIO container)
+
+Both test classes share infrastructure per class: containers, `KtorServer`, and `HttpClient` are initialized once via `by lazy` in the companion object and started in `@BeforeAll`. No `testApplication` — real Netty, real HTTP frames.
 
 The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`) and a fixed workspace path so `withReuse(true)` actually works — subsequent test runs reuse the running container instead of rebuilding.
 
@@ -223,30 +278,38 @@ The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-tes
 ```json
 {
   "anchor": { "text": "...", "paragraphIndex": 0, "charStart": 0, "charEnd": 5 },
-  "newText": "..."
+  "newText": { "text": "...", "properties": [] }
 }
 ```
 
 ## What is still missing (planned)
 
 - Error handling for UNO connection failures and document load errors
-- **Real HTTP integration tests**: `IOControllerIT` currently uses Ktor's in-memory `testApplication` (test engine, not Netty). 90% coverage but Netty-specific behavior (connection handling, real HTTP frames) is untested. Future refactoring: start a real `embeddedServer(Netty)` on a random port in tests, make real HTTP calls, stop after test. Requires `start(port)` + `stop()` on `KtorServer`.
 
-### Logging Decorator
+## Outlook — LibreOffice MCP Plugin
 
-Add `LoggingKollabAPI(delegate: KollabAPI) : KollabAPI` and `LoggingIOAPI(delegate: IOAPI) : IOAPI` — wrap the interfaces, log each call (method + parameters + duration), delegate to the real implementation. In `KtorServer.kt`, wrap `LibereKollab()` and `MinioObject()` with the decorators.
+Long-term the current Ktor REST approach could be replaced by a native LibreOffice Extension that exposes the same functionality via MCP instead of HTTP. Claude Code CLI would then be the client — no browser, no Swagger, no separate container needed.
 
-### RichText — Text formatting properties
-
-Text-returning methods (`getText`, `getTextByPages`, `getTextByChapter`) currently return plain `String`. Replace with `RichText`:
-
-```kotlin
-enum class SpanType { BOLD, ITALIC, UNDERLINE, STRIKETHROUGH }
-data class TextSpan(val from: Int, val to: Int, val type: SpanType)
-data class RichText(val text: String, val spans: List<TextSpan>)
+**Architecture:**
+```
+Claude Code CLI
+      │  MCP protocol (stdio or localhost)
+LibreOffice Extension (.oxt)
+      │  in-process UNO (no socket)
+LibreOffice document(s)
 ```
 
-UNO implementation: enumerate text portions, read `CharWeight`, `CharPosture`, `CharUnderline`, `CharStrikeout` properties to build the span list alongside the text string.
+**Key differences from today:**
+- Extension runs inside LibreOffice's JVM — direct in-process UNO access, no `connect()`, no `limitedParallelism` workaround
+- Kotlin compiles to JVM bytecode → Kotlin JAR works as a LibreOffice Java component out of the box (`libreoffice.jar` is already in `libs/uno/`)
+- One MCP server for all open documents — `documentId` stays as a tool parameter, resolved via `XDesktop.getComponents()` at startup
+- MinIO / container orchestration optional — local-first, no Docker required for end users
+- User interaction: work in the terminal (Claude Code), see changes live in the open LibreOffice window
+
+**What carries over unchanged:**
+- Entire domain model (`TextAnchor`, `Comment`, `MarkedText`, `Change`, etc.)
+- All UNO logic from `LibereKollab` except the `connect()` bootstrap — replaced by receiving `XComponentContext` directly from LibreOffice
+- `KollabAPI` / `IOAPI` port interfaces — adapters just swap out the transport layer
 
 ## Environment variables (`.env`)
 
