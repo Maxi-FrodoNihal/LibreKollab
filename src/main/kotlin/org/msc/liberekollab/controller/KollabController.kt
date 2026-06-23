@@ -8,9 +8,8 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import org.msc.liberekollab.LibereKollab
 import org.msc.liberekollab.abstrakt.KollabAPI
-import org.msc.liberekollab.model.ChangeStatus
+import org.msc.liberekollab.model.change.ChangeStatus
 import org.msc.liberekollab.model.Comment
 import org.msc.liberekollab.request.AddCommentRequest
 import org.msc.liberekollab.request.EditTextRequest
@@ -22,9 +21,7 @@ import org.msc.liberekollab.response.EditModeResponse
 import org.msc.liberekollab.response.PageCountResponse
 import org.msc.liberekollab.response.TextResponse
 
-class KollabController {
-
-    private val kollabAPI: KollabAPI = LibereKollab()
+class KollabController(private val kollabAPI: KollabAPI) {
 
     fun registerRoutes(routing: Routing) {
         routing.route("/kollab") {

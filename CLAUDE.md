@@ -230,6 +230,7 @@ The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-tes
 ## What is still missing (planned)
 
 - Error handling for UNO connection failures and document load errors
+- **Real HTTP integration tests**: `IOControllerIT` currently uses Ktor's in-memory `testApplication` (test engine, not Netty). 90% coverage but Netty-specific behavior (connection handling, real HTTP frames) is untested. Future refactoring: start a real `embeddedServer(Netty)` on a random port in tests, make real HTTP calls, stop after test. Requires `start(port)` + `stop()` on `KtorServer`.
 
 ### Logging Decorator
 

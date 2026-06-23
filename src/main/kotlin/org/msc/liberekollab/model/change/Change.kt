@@ -1,7 +1,8 @@
-package org.msc.liberekollab.model
+package org.msc.liberekollab.model.change
 
 import kotlinx.datetime.LocalDateTime
 import kotlinx.serialization.Serializable
+import org.msc.liberekollab.model.TextAnchor
 
 @Serializable
 data class Change(

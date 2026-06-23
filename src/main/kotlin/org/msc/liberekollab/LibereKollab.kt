@@ -1,5 +1,6 @@
 package org.msc.liberekollab
 
+import com.sun.star.awt.FontSlant
 import com.sun.star.beans.PropertyValue
 import com.sun.star.beans.XPropertySet
 import com.sun.star.bridge.XUnoUrlResolver
@@ -27,13 +28,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 import org.msc.liberekollab.abstrakt.IOAPI
 import org.msc.liberekollab.abstrakt.KollabAPI
-import org.msc.liberekollab.model.Change
-import org.msc.liberekollab.model.ChangeAction
-import org.msc.liberekollab.model.ChangeStatus
+import org.msc.liberekollab.model.change.Change
+import org.msc.liberekollab.model.change.ChangeAction
+import org.msc.liberekollab.model.change.ChangeStatus
 import org.msc.liberekollab.model.Comment
 import org.msc.liberekollab.model.TextAnchor
-import org.msc.liberekollab.model.toHash
-import org.msc.liberekollab.storage.MinioObject
+import org.msc.liberekollab.model.text.MarkedText
+import org.msc.liberekollab.model.text.MarkIndex
+import org.msc.liberekollab.model.text.properties.BoldProperty
+import org.msc.liberekollab.model.text.properties.ItalicProperty
+import org.msc.liberekollab.model.text.properties.StrikethroughProperty
+import org.msc.liberekollab.model.text.properties.TextProperty
+import org.msc.liberekollab.model.text.properties.UnderlineProperty
+import org.msc.liberekollab.adapter.MinioAdapter
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -55,7 +62,7 @@ class LibereKollab(
     constructor() : this(
         host = dotenv { ignoreIfMissing = true }["LIBREOFFICE_HOST"],
         port = dotenv { ignoreIfMissing = true }["LIBREOFFICE_PORT"].toInt(),
-        storage = MinioObject(),
+        storage = MinioAdapter(),
         workspacePath = dotenv { ignoreIfMissing = true }.get(
             "WORKSPACE_PATH"
         ) ?: (System.getProperty("user.dir") + "/workspace"),
@@ -91,7 +98,7 @@ class LibereKollab(
         )
     }
 
-    private fun <T> withWorkspaceFile(documentId: String, block: (File) -> T): T {
+    private suspend fun <T> withWorkspaceFile(documentId: String, block: (File) -> T): T {
         val (tempFile, _) = resolveWorkspaceFile(documentId)
         return try {
             block(tempFile)
@@ -100,7 +107,7 @@ class LibereKollab(
         }
     }
 
-    private fun <T> withWorkspaceFileAndWriteback(documentId: String, block: (File) -> T): T {
+    private suspend fun <T> withWorkspaceFileAndWriteback(documentId: String, block: (File) -> T): T {
         val (tempFile, fileName) = resolveWorkspaceFile(documentId)
         return try {
             block(tempFile)
@@ -110,7 +117,7 @@ class LibereKollab(
         }
     }
 
-    private fun resolveWorkspaceFile(documentId: String): Pair<File, String> {
+    private suspend fun resolveWorkspaceFile(documentId: String): Pair<File, String> {
         val objectName = storage.ls().first { it.startsWith(documentId) }
         val fileName = objectName.removePrefix("${documentId}_")
         val bytes = (storage.download(documentId) as ByteArrayOutputStream).toByteArray()
@@ -120,7 +127,7 @@ class LibereKollab(
         return Pair(tempFile, fileName)
     }
 
-    private fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T =
+    private suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T =
         withWorkspaceFileAndWriteback(documentId) { tempFile ->
             val loadProps = arrayOf(PropertyValue().apply { Name = "Hidden"; Value = true })
             val component = getDesktop().loadComponentFromURL(
@@ -136,7 +143,7 @@ class LibereKollab(
             }
         }
 
-    private fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T {
+    private suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T {
         return withWorkspaceFile(documentId) { tempFile ->
             val loadProps = arrayOf(PropertyValue().apply {
                 Name = "Hidden"
@@ -163,18 +170,17 @@ class LibereKollab(
         return UnoRuntime.queryInterface(XPageCursor::class.java, vcSupplier.viewCursor)
     }
 
-    private fun getParagraphText(para: Any, changeStatus: ChangeStatus): String {
-        if (changeStatus == ChangeStatus.FUSION) {
-            return UnoRuntime.queryInterface(XTextRange::class.java, para)?.string ?: ""
-        }
+    private fun extractParagraphMarkedText(para: Any, changeStatus: ChangeStatus, paragraphIndex: Int): Pair<String, List<TextProperty>> {
         val sb = StringBuilder()
-        val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)
-            ?.createEnumeration() ?: return ""
+        val properties = mutableListOf<TextProperty>()
+        var offset = 0
         var inDelete = false
         var inInsert = false
+        val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)
+            ?.createEnumeration() ?: return Pair("", emptyList())
         while (portions.hasMoreElements()) {
             val portion = portions.nextElement()
-            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion)
+            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion) ?: continue
             when (propSet.getPropertyValue("TextPortionType") as? String) {
                 "Redline" -> {
                     val isStart = propSet.getPropertyValue("IsStart") as? Boolean ?: false
@@ -189,30 +195,51 @@ class LibereKollab(
                         ChangeStatus.AFTER  -> !inDelete
                         ChangeStatus.FUSION -> true
                     }
-                    if (include) sb.append(UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: "")
+                    if (include) {
+                        val text = UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: ""
+                        if (text.isNotEmpty()) {
+                            val idx = MarkIndex(paragraphIndex, offset, offset + text.length)
+                            collectFormatting(propSet, idx, properties)
+                            sb.append(text)
+                            offset += text.length
+                        }
+                    }
                 }
             }
         }
-        return sb.toString()
+        return Pair(sb.toString(), properties)
     }
 
-    override suspend fun getText(documentId: String, changeStatus: ChangeStatus): String =
+    private fun collectFormatting(propSet: XPropertySet, idx: MarkIndex, properties: MutableList<TextProperty>) {
+        val charWeight = try { propSet.getPropertyValue("CharWeight") as? Float } catch (e: Exception) { null }
+        if (charWeight != null && charWeight >= 150f) properties.add(BoldProperty(idx))
+
+        val charPosture = try { propSet.getPropertyValue("CharPosture") as? FontSlant } catch (e: Exception) { null }
+        if (charPosture != null && charPosture != FontSlant.NONE && charPosture != FontSlant.DONTKNOW) properties.add(ItalicProperty(idx))
+
+        val charUnderline = try { (propSet.getPropertyValue("CharUnderline") as? Number)?.toInt() } catch (e: Exception) { null }
+        if (charUnderline != null && charUnderline != 0) properties.add(UnderlineProperty(idx))
+
+        val charStrikeout = try { (propSet.getPropertyValue("CharStrikeout") as? Number)?.toInt() } catch (e: Exception) { null }
+        if (charStrikeout != null && charStrikeout != 0) properties.add(StrikethroughProperty(idx))
+    }
+
+    override suspend fun getText(documentId: String, changeStatus: ChangeStatus): MarkedText =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
-                if (changeStatus == ChangeStatus.FUSION) {
-                    textDoc.text.string
-                } else {
-                    val sb = StringBuilder()
-                    val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
-                        .createEnumeration()
-                    var first = true
-                    while (paragraphs.hasMoreElements()) {
-                        if (!first) sb.append("\n")
-                        first = false
-                        sb.append(getParagraphText(paragraphs.nextElement(), changeStatus))
-                    }
-                    sb.toString()
+                val sb = StringBuilder()
+                val properties = mutableListOf<TextProperty>()
+                val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
+                    .createEnumeration()
+                var paraIdx = 0
+                while (paragraphs.hasMoreElements()) {
+                    if (paraIdx > 0) sb.append("\n")
+                    val (text, props) = extractParagraphMarkedText(paragraphs.nextElement(), changeStatus, paraIdx)
+                    sb.append(text)
+                    properties.addAll(props)
+                    paraIdx++
                 }
+                MarkedText(sb.toString(), properties)
             }
         }
 
@@ -280,12 +307,67 @@ class LibereKollab(
             }
         }
 
-    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: String) {
+    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText) {
         withEnsuredEditMode(documentId) {
             withContext(libreOfficeDispatcher) {
                 withDocumentMutating(documentId) { textDoc ->
-                    resolveAnchorRange(textDoc, anchor).setString(newText)
+                    resolveAnchorRange(textDoc, anchor).setString(newText.text)
+                    applyFormatting(textDoc, anchor, newText)
                 }
+            }
+        }
+    }
+
+    private fun applyFormatting(textDoc: XTextDocument, anchor: TextAnchor, markedText: MarkedText) {
+        val insertLines = markedText.text.split('\n')
+        val paraCount = insertLines.size
+        val paraMap = mutableMapOf<Int, Any>()
+        val allParagraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+        var idx = 0
+        while (allParagraphs.hasMoreElements()) {
+            val para = allParagraphs.nextElement()
+            val absIdx = idx++
+            if (absIdx in anchor.paragraphIndex until anchor.paragraphIndex + paraCount) paraMap[absIdx] = para
+        }
+        // Reset formatting only on the newly inserted text.
+        // In paragraph 0, the DELETE redline sits at [anchor.charStart..anchor.charEnd) — skip it first.
+        // Subsequent new paragraphs start clean so their full range can be reset directly.
+        val firstPara = paraMap[anchor.paragraphIndex]
+        if (firstPara != null) {
+            val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, firstPara).start
+            val resetCursor = textDoc.text.createTextCursorByRange(paraStart)
+            resetCursor.goRight(anchor.charEnd.toShort(), false)
+            resetCursor.goRight(insertLines[0].length.toShort(), true)
+            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, resetCursor)
+            propSet.setPropertyValue("CharWeight", 100f)
+            propSet.setPropertyValue("CharPosture", FontSlant.NONE)
+            propSet.setPropertyValue("CharUnderline", 0.toShort())
+            propSet.setPropertyValue("CharStrikeout", 0.toShort())
+        }
+        for (paraIdx in anchor.paragraphIndex + 1 until anchor.paragraphIndex + paraCount) {
+            val para = paraMap[paraIdx] ?: continue
+            val range = UnoRuntime.queryInterface(XTextRange::class.java, para)
+            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, textDoc.text.createTextCursorByRange(range))
+            propSet.setPropertyValue("CharWeight", 100f)
+            propSet.setPropertyValue("CharPosture", FontSlant.NONE)
+            propSet.setPropertyValue("CharUnderline", 0.toShort())
+            propSet.setPropertyValue("CharStrikeout", 0.toShort())
+        }
+        for (property in markedText.properties) {
+            val docParaIdx = anchor.paragraphIndex + property.markIndex.paragraphIndex
+            val para = paraMap[docParaIdx] ?: continue
+            val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, para).start
+            val cursor = textDoc.text.createTextCursorByRange(paraStart)
+            // For the anchor paragraph, skip past the DELETE redline before applying offsets.
+            if (property.markIndex.paragraphIndex == 0) cursor.goRight(anchor.charEnd.toShort(), false)
+            cursor.goRight(property.markIndex.from.toShort(), false)
+            cursor.goRight((property.markIndex.to - property.markIndex.from).toShort(), true)
+            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, cursor)
+            when (property) {
+                is BoldProperty -> propSet.setPropertyValue("CharWeight", 150f)
+                is ItalicProperty -> propSet.setPropertyValue("CharPosture", FontSlant.ITALIC)
+                is UnderlineProperty -> propSet.setPropertyValue("CharUnderline", 1.toShort())
+                is StrikethroughProperty -> propSet.setPropertyValue("CharStrikeout", 1.toShort())
             }
         }
     }
@@ -316,7 +398,7 @@ class LibereKollab(
         }
     }
 
-    override suspend fun getTextByPages(documentId: String, fromPage: Int, toPage: Int, changeStatus: ChangeStatus): String =
+    override suspend fun getTextByPages(documentId: String, fromPage: Int, toPage: Int, changeStatus: ChangeStatus): MarkedText =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
                 val pc = pageCursorOf(textDoc)
@@ -326,18 +408,24 @@ class LibereKollab(
                 ).viewCursor
 
                 val sb = StringBuilder()
+                val properties = mutableListOf<TextProperty>()
                 val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                     .createEnumeration()
-
+                var paraIdx = 0
                 while (paragraphs.hasMoreElements()) {
                     val element = paragraphs.nextElement()
                     val textRange = UnoRuntime.queryInterface(XTextRange::class.java, element)
                     vc.gotoRange(textRange.start, false)
                     val pageNum = pc.page.toInt()
-                    if (pageNum in fromPage..toPage) sb.append(getParagraphText(element, changeStatus)).append("\n")
+                    if (pageNum in fromPage..toPage) {
+                        val (text, props) = extractParagraphMarkedText(element, changeStatus, paraIdx)
+                        sb.append(text).append("\n")
+                        properties.addAll(props)
+                    }
                     if (pageNum > toPage) break
+                    paraIdx++
                 }
-                sb.toString().trimEnd()
+                MarkedText(sb.toString().trimEnd(), properties)
             }
         }
 
@@ -402,7 +490,7 @@ class LibereKollab(
                     val serviceInfo = UnoRuntime.queryInterface(XServiceInfo::class.java, field)
                     if (!serviceInfo.supportsService("com.sun.star.text.TextField.Annotation")) continue
                     val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-                    if (buildTextAnchor(textDoc, anchorRange).toHash() == commentId) {
+                    if (buildTextAnchor(textDoc, anchorRange).id == commentId) {
                         val now = java.time.LocalDateTime.now()
                         UnoRuntime.queryInterface(XPropertySet::class.java, field).apply {
                             setPropertyValue("Content", newText)
@@ -432,7 +520,7 @@ class LibereKollab(
                     val serviceInfo = UnoRuntime.queryInterface(XServiceInfo::class.java, field)
                     if (!serviceInfo.supportsService("com.sun.star.text.TextField.Annotation")) continue
                     val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-                    if (buildTextAnchor(textDoc, anchorRange).toHash() == commentId) {
+                    if (buildTextAnchor(textDoc, anchorRange).id == commentId) {
                         textDoc.text.removeTextContent(
                             UnoRuntime.queryInterface(XTextContent::class.java, field)
                         )
@@ -500,12 +588,14 @@ class LibereKollab(
         return TextAnchor(anchorRange.string, paragraphIndex, charStart, charEnd)
     }
 
-    override suspend fun getTextByChapter(documentId: String, chapter: String, changeStatus: ChangeStatus): String =
+    override suspend fun getTextByChapter(documentId: String, chapter: String, changeStatus: ChangeStatus): MarkedText =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
                 val sb = StringBuilder()
+                val properties = mutableListOf<TextProperty>()
                 var inChapter = false
                 var chapterLevel = 0
+                var paraIdx = 0
 
                 val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                     .createEnumeration()
@@ -524,10 +614,13 @@ class LibereKollab(
                             chapterLevel = outlineLevel
                         }
                     } else if (inChapter && paraText.isNotBlank()) {
-                        sb.append(getParagraphText(element, changeStatus)).append("\n")
+                        val (text, props) = extractParagraphMarkedText(element, changeStatus, paraIdx)
+                        sb.append(text).append("\n")
+                        properties.addAll(props)
                     }
+                    paraIdx++
                 }
-                sb.toString().trimEnd()
+                MarkedText(sb.toString().trimEnd(), properties)
             }
         }
 }

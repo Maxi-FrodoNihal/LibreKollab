@@ -5,8 +5,8 @@ import java.io.OutputStream
 
 interface IOAPI {
     fun nextId(): String
-    fun upload(documentId: String, fileName: String, content: InputStream): String
-    fun download(documentId: String): OutputStream
-    fun delete(documentId: String)
-    fun ls(): List<String>
+    suspend fun ls(): List<String>
+    suspend fun upload(documentId: String, fileName: String, content: InputStream): String
+    suspend fun download(documentId: String): OutputStream
+    suspend fun delete(documentId: String)
 }

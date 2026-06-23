@@ -13,6 +13,6 @@ data class Comment(
 ) {
     companion object {
         fun of(anchor: TextAnchor, author: String, content: String, dateTime: LocalDateTime): Comment =
-            Comment(anchor.toHash(), anchor, author, content, dateTime)
+            Comment(anchor.id, anchor, author, content, dateTime)
     }
 }

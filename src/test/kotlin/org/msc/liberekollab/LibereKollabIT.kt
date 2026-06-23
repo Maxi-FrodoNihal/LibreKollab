@@ -6,10 +6,17 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDateTime
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
-import org.msc.liberekollab.model.ChangeAction
-import org.msc.liberekollab.model.ChangeStatus
+import org.msc.liberekollab.model.change.ChangeAction
+import org.msc.liberekollab.model.change.ChangeStatus
 import org.msc.liberekollab.model.TextAnchor
-import org.msc.liberekollab.storage.MinioObject
+import org.msc.liberekollab.model.text.MarkIndex
+import org.msc.liberekollab.model.text.MarkedText
+import org.msc.liberekollab.model.text.properties.BoldProperty
+import org.msc.liberekollab.model.text.properties.ItalicProperty
+import org.msc.liberekollab.model.text.properties.StrikethroughProperty
+import org.msc.liberekollab.model.text.properties.UnderlineProperty
+import org.msc.liberekollab.logging.LoggingKollabAPI
+import org.msc.liberekollab.adapter.MinioAdapter
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -51,7 +58,7 @@ class LibereKollabIT {
             .waitingFor(Wait.forHttp("/minio/health/live").forPort(9000))
     }
 
-    private fun storage() = MinioObject(
+    private fun storage() = MinioAdapter(
         host = minio.host,
         port = minio.getMappedPort(9000),
         accessKey = "minioadmin",
@@ -59,17 +66,17 @@ class LibereKollabIT {
         bucket = "test-documents"
     )
 
-    private fun kollab(storage: MinioObject) = LibereKollab(
+    private fun kollab(storage: MinioAdapter) = LoggingKollabAPI(LibereKollab(
         host = libreoffice.host,
         port = libreoffice.getMappedPort(2002),
         storage = storage,
         workspacePath = workspacePath,
         containerWorkspacePath = CONTAINER_WORKSPACE_PATH
-    )
+    ))
 
-    private fun upload(storage: MinioObject, resourceName: String): String {
+    private fun upload(storage: MinioAdapter, resourceName: String): String {
         val bytes = javaClass.getResourceAsStream("/$resourceName")!!.readBytes()
-        return storage.upload(storage.nextId(), resourceName, ByteArrayInputStream(bytes))
+        return runBlocking { storage.upload(storage.nextId(), resourceName, ByteArrayInputStream(bytes)) }
     }
 
     @Test
@@ -78,11 +85,11 @@ class LibereKollabIT {
         val documentId = upload(storage, "test_hallo.odt")
         val anchor = TextAnchor("Hallo", 0, 0, 5)
 
-        runBlocking { kollab(storage).editText(documentId, anchor, "Tschüss") }
+        runBlocking { kollab(storage).editText(documentId, anchor, MarkedText("Tschüss")) }
 
-        assertThat(runBlocking { kollab(storage).getText(documentId, ChangeStatus.AFTER) }.trim())
+        assertThat(runBlocking { kollab(storage).getText(documentId, ChangeStatus.AFTER) }.text.trim())
             .isEqualTo("Tschüss test")
-        assertThat(runBlocking { kollab(storage).getText(documentId, ChangeStatus.BEFORE) }.trim())
+        assertThat(runBlocking { kollab(storage).getText(documentId, ChangeStatus.BEFORE) }.text.trim())
             .isEqualTo("Hallo test")
     }
 
@@ -91,7 +98,7 @@ class LibereKollabIT {
         val storage = storage()
         val documentId = upload(storage, "test_hallo.odt")
 
-        runBlocking { kollab(storage).editText(documentId, TextAnchor("Hallo", 0, 0, 5), "Tschüss") }
+        runBlocking { kollab(storage).editText(documentId, TextAnchor("Hallo", 0, 0, 5), MarkedText("Tschüss")) }
 
         val changes = runBlocking { kollab(storage).getChanges(documentId) }
         assertThat(changes).hasSize(2)
@@ -106,7 +113,7 @@ class LibereKollabIT {
         val documentId = upload(storage, "test_hallo.odt")
         val anchor = TextAnchor("Hallo", 99, 0, 5)
 
-        assertThatThrownBy { runBlocking { kollab(storage).editText(documentId, anchor, "Tschüss") } }
+        assertThatThrownBy { runBlocking { kollab(storage).editText(documentId, anchor, MarkedText("Tschüss")) } }
             .hasCauseInstanceOf(IllegalArgumentException::class.java)
     }
 
@@ -114,8 +121,55 @@ class LibereKollabIT {
     fun `getText extracts text from odt file`() {
         val storage = storage()
         val documentId = upload(storage, "test_hallo.odt")
-        val text = runBlocking { kollab(storage).getText(documentId) }
-        assertThat(text.trim()).isEqualTo("Hallo test")
+        val markedText = runBlocking { kollab(storage).getText(documentId) }
+        assertThat(markedText.text).isEqualTo("Hallo test")
+    }
+
+    @Test
+    fun `getText extracts text formatting properties`() {
+        val storage = storage()
+        val documentId = upload(storage, "test_text_properties.odt")
+        val markedText = runBlocking { kollab(storage).getText(documentId) }
+
+        assertThat(markedText.text).isEqualTo(
+            "Das ist ein fetter Text\nDas ist ein kursiver Text\nDas ist ein unterstrichener Text\nDas ist ein durchgestrichener Text"
+        )
+        assertThat(markedText.properties).hasSize(4)
+        assertThat(markedText.properties[0]).isInstanceOf(BoldProperty::class.java)
+        assertThat(markedText.properties[0].markIndex).isEqualTo(MarkIndex(0, 0, 23))
+        assertThat(markedText.properties[1]).isInstanceOf(ItalicProperty::class.java)
+        assertThat(markedText.properties[1].markIndex).isEqualTo(MarkIndex(1, 0, 25))
+        assertThat(markedText.properties[2]).isInstanceOf(UnderlineProperty::class.java)
+        assertThat(markedText.properties[2].markIndex).isEqualTo(MarkIndex(2, 0, 32))
+        assertThat(markedText.properties[3]).isInstanceOf(StrikethroughProperty::class.java)
+        assertThat(markedText.properties[3].markIndex).isEqualTo(MarkIndex(3, 0, 34))
+    }
+
+    @Test
+    fun `editText inserts text with formatting property`() {
+        val storage = storage()
+        val documentId = upload(storage, "test_hallo.odt")
+        val anchor = TextAnchor("Hallo", 0, 0, 5)
+        val boldText = MarkedText("Fett", listOf(BoldProperty(MarkIndex(0, 0, 4))))
+
+        runBlocking { kollab(storage).editText(documentId, anchor, boldText) }
+
+        val result = runBlocking { kollab(storage).getText(documentId, ChangeStatus.AFTER) }
+        assertThat(result.properties).hasSize(1)
+        assertThat(result.properties[0]).isInstanceOf(BoldProperty::class.java)
+        assertThat(result.properties[0].markIndex).isEqualTo(MarkIndex(0, 0, 4))
+    }
+
+    @Test
+    fun `editText removes formatting when replacing with plain text`() {
+        val storage = storage()
+        val documentId = upload(storage, "test_text_properties.odt")
+        val anchor = TextAnchor("Das ist ein fetter Text", 0, 0, 23)
+
+        runBlocking { kollab(storage).editText(documentId, anchor, MarkedText("Das ist ein fetter Text")) }
+
+        val result = runBlocking { kollab(storage).getText(documentId, ChangeStatus.AFTER) }
+        assertThat(result.properties.filterIsInstance<BoldProperty>()).isEmpty()
     }
 
     @Test
@@ -141,16 +195,16 @@ class LibereKollabIT {
     fun `getTextByPages returns text of given page`() {
         val storage = storage()
         val documentId = upload(storage, "test_three_pages.odt")
-        val text = runBlocking { kollab(storage).getTextByPages(documentId, 2, 2) }
-        assertThat(text.trim()).isEqualTo("Text Seite 2")
+        val markedText = runBlocking { kollab(storage).getTextByPages(documentId, 2, 2) }
+        assertThat(markedText.text.trim()).isEqualTo("Text Seite 2")
     }
 
     @Test
     fun `getTextByChapter returns text of given chapter`() {
         val storage = storage()
         val documentId = upload(storage, "test_two_chapters.odt")
-        val text = runBlocking { kollab(storage).getTextByChapter(documentId, "Kapitel 1 Test Überschrift Hallo") }
-        assertThat(text.trim()).isEqualTo("Das ist der Text für Kapitel 1")
+        val markedText = runBlocking { kollab(storage).getTextByChapter(documentId, "Kapitel 1 Test Überschrift Hallo") }
+        assertThat(markedText.text.trim()).isEqualTo("Das ist der Text für Kapitel 1")
     }
 
     @Test

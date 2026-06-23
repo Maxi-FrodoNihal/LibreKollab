@@ -3,6 +3,7 @@ package org.msc.liberekollab
 import io.github.smiley4.ktoropenapi.OpenApi
 import io.github.smiley4.ktoropenapi.openApi
 import io.github.smiley4.ktorswaggerui.swaggerUI
+import io.ktor.server.application.*
 import io.ktor.server.application.install
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
@@ -10,29 +11,43 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.serialization.kotlinx.json.*
+import org.msc.liberekollab.abstrakt.IOAPI
+import org.msc.liberekollab.abstrakt.KollabAPI
+import io.github.cdimascio.dotenv.dotenv
 import org.msc.liberekollab.controller.IOController
 import org.msc.liberekollab.controller.KollabController
-import org.msc.liberekollab.storage.MinioObject
+import org.slf4j.LoggerFactory
 
-class KtorServer {
+class KtorServer(
+    private val io: IOAPI,
+    private val kollab: KollabAPI
+) {
+
+    private val log = LoggerFactory.getLogger(KtorServer::class.java)
+
+    fun Application.configure() {
+        install(ContentNegotiation) { json() }
+        install(OpenApi) {
+            info {
+                title = "LibereKollab API"
+                version = "1.0"
+                description = "LibreOffice document editing via UNO as an AI-usable interface."
+            }
+        }
+        routing {
+            route("api.json") { openApi() }
+            get("swagger") { call.respondRedirect("/swagger/index.html") }
+            route("swagger") { swaggerUI("/api.json") }
+            KollabController(kollab).registerRoutes(this)
+            IOController(io).registerRoutes(this)
+        }
+    }
 
     fun start() {
-        embeddedServer(Netty, port = 8080) {
-            install(ContentNegotiation) { json() }
-            install(OpenApi) {
-                info {
-                    title = "LibereKollab API"
-                    version = "1.0"
-                    description = "LibreOffice document editing via UNO as an AI-usable interface."
-                }
-            }
-            routing {
-                route("api.json") { openApi() }
-                get("swagger") { call.respondRedirect("/swagger/index.html") }
-                route("swagger") { swaggerUI("/api.json") }
-                KollabController().registerRoutes(this)
-                IOController(MinioObject()).registerRoutes(this)
-            }
+        val port = dotenv { ignoreIfMissing = true }.get("APP_PORT")?.toInt() ?: 8080
+        log.info("Starting LibereKollab on http://0.0.0.0:$port")
+        embeddedServer(Netty, port = port) {
+            configure()
         }.start(wait = true)
     }
 }

@@ -4,17 +4,13 @@ import io.ktor.client.request.*
 import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.server.application.install
-import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.routing.*
 import io.ktor.server.testing.*
 import kotlinx.serialization.json.Json
 import org.assertj.core.api.Assertions.assertThat
-import org.msc.liberekollab.controller.IOController
+import org.msc.liberekollab.logging.LoggingIOAPI
 import org.msc.liberekollab.response.ListDocumentsResponse
 import org.msc.liberekollab.response.UploadResponse
-import org.msc.liberekollab.storage.MinioObject
+import org.msc.liberekollab.adapter.MinioAdapter
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
@@ -37,7 +33,7 @@ class IOControllerIT {
     }
 
     private fun withDocumentController(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        val storage = MinioObject(
+        val storage = MinioAdapter(
             host = minio.host,
             port = minio.getMappedPort(9000),
             accessKey = "minioadmin",
@@ -45,8 +41,9 @@ class IOControllerIT {
             bucket = "test-${UUID.randomUUID()}"
         )
         application {
-            install(ContentNegotiation) { json() }
-            routing { IOController(storage).registerRoutes(this) }
+            with(KtorServer(io = LoggingIOAPI(storage), kollab = LibereKollab())) {
+                configure()
+            }
         }
         block()
     }
@@ -103,7 +100,7 @@ class IOControllerIT {
         val response = client.get("/documents/$documentId")
         assertThat(response.status).isEqualTo(HttpStatusCode.OK)
         assertThat(response.contentType()).isEqualTo(ContentType.Application.OctetStream)
-        assertThat(response.readBytes()).isNotEmpty()
+        assertThat(response.readRawBytes()).isNotEmpty()
     }
 
     @Test
