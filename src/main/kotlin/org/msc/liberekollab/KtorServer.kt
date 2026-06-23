@@ -24,6 +24,18 @@ class KtorServer(
 ) {
 
     private val log = LoggerFactory.getLogger(KtorServer::class.java)
+    private var engine: EmbeddedServer<*, *>? = null
+
+    fun start(port: Int) {
+        log.info("Starting LibereKollab on http://0.0.0.0:$port")
+        engine = embeddedServer(Netty, port = port) { configure() }
+            .apply { start(wait = false) }
+    }
+
+    fun stop() {
+        engine?.stop(0, 0)
+        engine = null
+    }
 
     fun Application.configure() {
         install(ContentNegotiation) { json() }
@@ -41,13 +53,5 @@ class KtorServer(
             KollabController(kollab).registerRoutes(this)
             IOController(io).registerRoutes(this)
         }
-    }
-
-    fun start() {
-        val port = dotenv { ignoreIfMissing = true }.get("APP_PORT")?.toInt() ?: 8080
-        log.info("Starting LibereKollab on http://0.0.0.0:$port")
-        embeddedServer(Netty, port = port) {
-            configure()
-        }.start(wait = true)
     }
 }
