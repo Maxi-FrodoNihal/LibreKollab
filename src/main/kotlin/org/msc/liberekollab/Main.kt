@@ -1,9 +1,11 @@
 package org.msc.liberekollab
 
 import io.github.cdimascio.dotenv.dotenv
-import org.msc.liberekollab.logging.LoggingIOAPI
-import org.msc.liberekollab.logging.LoggingKollabAPI
-import org.msc.liberekollab.adapter.MinioAdapter
+import org.msc.liberekollab.adapter.logging.LoggingIOAPI
+import org.msc.liberekollab.adapter.logging.LoggingKollabAPI
+import org.msc.liberekollab.adapter.minio.MinioAdapter
+import org.msc.liberekollab.adapter.uno.LibereKollab
+import org.msc.liberekollab.adapter.http.KtorServer
 import kotlin.text.toInt
 
 fun main() {

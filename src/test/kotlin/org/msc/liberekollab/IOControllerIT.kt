@@ -13,10 +13,12 @@ import kotlinx.serialization.json.Json
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
-import org.msc.liberekollab.adapter.MinioAdapter
-import org.msc.liberekollab.logging.LoggingIOAPI
-import org.msc.liberekollab.response.ListDocumentsResponse
-import org.msc.liberekollab.response.UploadResponse
+import org.msc.liberekollab.adapter.minio.MinioAdapter
+import org.msc.liberekollab.adapter.logging.LoggingIOAPI
+import org.msc.liberekollab.adapter.http.response.ListDocumentsResponse
+import org.msc.liberekollab.adapter.http.response.UploadResponse
+import org.msc.liberekollab.adapter.http.KtorServer
+import org.msc.liberekollab.adapter.uno.LibereKollab
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
