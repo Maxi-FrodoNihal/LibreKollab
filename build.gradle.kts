@@ -20,22 +20,18 @@ repositories {
 }
 
 dependencies {
-    implementation(files("$unoLibPath/libreoffice.jar"))
+    compileOnly(files("$unoLibPath/libreoffice.jar"))
+    testImplementation(files("$unoLibPath/libreoffice.jar"))
 
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
-    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-    implementation("io.github.smiley4:ktor-openapi:5.0.0")
-    implementation("io.github.smiley4:ktor-swagger-ui:5.0.0")
+    implementation("io.ktor:ktor-server-sse:$ktorVersion")
     implementation("ch.qos.logback:logback-classic:1.5.18")
     implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
-    implementation("io.minio:minio:9.0.3")
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
 
     testImplementation(kotlin("test"))
-    testImplementation("io.ktor:ktor-client-cio:$ktorVersion")
-    testImplementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion")
     testImplementation("org.assertj:assertj-core:3.27.3")
@@ -49,6 +45,36 @@ application {
     )
 }
 
+val fatJar by tasks.registering(Jar::class) {
+    archiveBaseName.set("liberekollab-all")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.get().output)
+    dependsOn(configurations.runtimeClasspath)
+    from({
+        configurations.runtimeClasspath.get()
+            .filter { it.name.endsWith(".jar") && !it.name.contains("libreoffice") }
+            .map { zipTree(it) }
+    })
+    manifest {
+        attributes["Implementation-Title"] = "LibereKollab"
+        attributes["Implementation-Version"] = version
+    }
+}
+
+val oxt by tasks.registering(Zip::class) {
+    group = "build"
+    description = "Packages the LibreOffice extension (.oxt)"
+    archiveBaseName.set("LibereKollab")
+    archiveExtension.set("oxt")
+    destinationDirectory.set(layout.buildDirectory.dir("oxt"))
+    dependsOn(fatJar)
+    from(fatJar) { rename { "liberekollab-all.jar" } }
+    from("oxt/META-INF") { into("META-INF") }
+    from("oxt") { include("*.components", "*.xcu", "*.xml", "*.txt") }
+    from("oxt/dialogs") { into("dialogs") }
+}
+
 tasks.test {
     useJUnitPlatform()
+    systemProperty("testcontainers.reuse.enable", "true")
 }

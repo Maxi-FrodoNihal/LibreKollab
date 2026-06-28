@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dlg:window PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "dialog.dtd">
+<dlg:window xmlns:dlg="http://openoffice.org/2000/dialog"
+            dlg:id="OptionsDialog"
+            dlg:left="0" dlg:top="0" dlg:width="230" dlg:height="115"
+            dlg:closeable="true" dlg:moveable="true">
+    <dlg:bulletinboard>
+        <dlg:fixedtext dlg:id="lblStatus"
+            dlg:left="5" dlg:top="8" dlg:width="220" dlg:height="12"
+            dlg:value="Status: -"/>
+        <dlg:fixedtext dlg:id="lblPort"
+            dlg:left="5" dlg:top="30" dlg:width="40" dlg:height="12"
+            dlg:value="Port:"/>
+        <dlg:textfield dlg:id="txtPort"
+            dlg:left="50" dlg:top="28" dlg:width="55" dlg:height="14"
+            dlg:value="8080"/>
+        <dlg:button dlg:id="btnToggle"
+            dlg:left="5" dlg:top="55" dlg:width="80" dlg:height="16"
+            dlg:value="Start Server"/>
+        <dlg:button dlg:id="btnOpenLog"
+            dlg:left="5" dlg:top="85" dlg:width="80" dlg:height="16"
+            dlg:value="Logdatei öffnen"/>
+    </dlg:bulletinboard>
+</dlg:window>

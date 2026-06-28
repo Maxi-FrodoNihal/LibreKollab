@@ -1,10 +1,10 @@
 # LibereKollab
 
-A Kotlin/Ktor REST API that exposes LibreOffice document editing via UNO as an AI-usable tool interface. An AI agent can read text, navigate chapters and pages, edit text with tracked changes, and manage comments — all over HTTP.
+A LibreOffice extension (.oxt) that exposes document editing as [MCP](https://modelcontextprotocol.io/) tools. Install it once and Claude Code can read, edit, and annotate any document you have open in LibreOffice — tracked changes, comments, chapters, pages, and more.
 
 ## What it does
 
-LibereKollab bridges the gap between AI agents and LibreOffice documents. Instead of working with raw file bytes, an agent can interact with a document through a structured API:
+LibereKollab bridges LibreOffice and AI agents. The extension starts an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
 
 - **Read** full text, specific pages, or individual chapters
 - **Edit** text ranges — all edits are recorded as LibreOffice tracked changes for human review
@@ -16,115 +16,98 @@ Humans retain full control: accept or reject tracked changes directly in LibreOf
 ## Architecture
 
 ```
-HTTP Client / AI Agent
-        │
-   Ktor REST API (port 8080)
-        │
-   ┌────┴─────────────────┐
-   │                       │
-UNO socket (port 2002)   MinIO (port 9000)
-LibreOffice headless      document storage
+Claude Code CLI
+      │  MCP (SSE, localhost:8080)
+LibereKollab OXT extension
+      │  in-process UNO
+LibreOffice document(s)
 ```
 
-One Pod (Ktor + LibreOffice sidecar) per open document. MinIO is shared centrally.
+The extension runs inside LibreOffice's JVM — no external server, no Docker, no database.
 
-## Quick start
+## Installation
 
-### Production
+### Prerequisites
+
+- LibreOffice 7.x or newer
+- Java 17+ (bundled with most LibreOffice installations)
+
+### Build the extension
 
 ```bash
-docker compose up --build
+./gradlew oxt
 ```
 
-All three services start in an isolated Docker network. Only port 8080 is exposed to the host.
+The extension is written to `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
 
-### Local development
+### Install in LibreOffice
 
-```bash
-docker compose -f docker-compose.dev.yml up
+`Extras > Extension Manager > Add...` → select the `.oxt` file.
+
+The MCP server starts automatically the next time LibreOffice opens a document.
+
+### Configure Claude Code
+
+Add the server to your Claude Code MCP config (`~/.config/claude-code/mcp.json` on Linux, `%APPDATA%\claude-code\mcp.json` on Windows):
+
+```json
+{
+  "mcpServers": {
+    "liberekollab": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse"
+    }
+  }
+}
 ```
 
-Then run `Main.kt` from IntelliJ. LibreOffice is at `localhost:2002`, MinIO at `localhost:9000`.
+## Options dialog
 
-## API
+`Extras > Optionen > LibereKollab > MCP Server`
 
-Interactive documentation is available at **`http://localhost:8080/swagger`** once the server is running.
+Shows the current status, lets you change the port, start/stop the server, and open the log file.
 
-Raw OpenAPI spec: `http://localhost:8080/api.json`
+## Available tools
 
-### Document storage (`/documents`)
+| Tool | Description |
+|------|-------------|
+| `list_documents` | List file names of all open documents |
+| `get_text` | Full document text (`changeStatus`: `BEFORE`/`FUSION`/`AFTER`) |
+| `get_page_count` | Number of pages |
+| `get_chapters` | List chapter headings |
+| `get_text_by_pages` | Text of a page range |
+| `get_text_by_chapter` | Text of a specific chapter |
+| `get_changes` | All tracked changes as JSON |
+| `get_edit_mode` | Whether Track Changes is enabled |
+| `edit_text` | Replace a text range (creates tracked change) |
+| `get_comments` | All comments as JSON |
+| `get_comment` | Single comment by ID |
+| `add_comment` | Add a comment anchored to a text range |
+| `update_comment` | Update comment text |
+| `delete_comment` | Delete a comment |
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/documents/health` | Health check |
-| `POST` | `/documents/upload` | Upload a document → returns `documentId` |
-| `GET` | `/documents` | List all document IDs |
-| `GET` | `/documents/{id}` | Download raw bytes |
-| `DELETE` | `/documents/{id}` | Delete document |
+The `documentId` parameter is the file name of the open document (e.g. `report.odt`).
 
-### Text & editing (`/kollab`)
+### changeStatus
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/kollab/health` | Health check |
-| `GET` | `/kollab/text/{documentId}` | Full document text |
-| `PATCH` | `/kollab/text/{documentId}` | Edit a text range (tracked change) |
-| `GET` | `/kollab/text/{documentId}/changes` | List tracked changes |
-| `GET` | `/kollab/text/{documentId}/pagecount` | Number of pages |
-| `GET` | `/kollab/text/{documentId}/chapters` | Chapter headings |
-| `GET` | `/kollab/text/{documentId}/pages/{from}/{to}` | Text of a page range |
-| `GET` | `/kollab/text/{documentId}/chapters/{chapter}` | Text of a chapter |
-| `GET` | `/kollab/text/{documentId}/editmode` | Whether Track Changes is active |
-
-Text endpoints accept `?changeStatus=BEFORE|FUSION|AFTER` (default: `FUSION`):
+Text-reading tools accept an optional `changeStatus` parameter:
 
 | Value | Meaning |
 |-------|---------|
-| `BEFORE` | Original text before any tracked edits |
-| `FUSION` | Raw LibreOffice string — shows both deleted and inserted text |
+| `BEFORE` | Original text before tracked edits |
+| `FUSION` | Both deleted and inserted text visible (default) |
 | `AFTER` | Text with all tracked changes applied |
-
-### Comments (`/kollab/text/{documentId}/comments`)
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/comments` | List all comments |
-| `GET` | `/comments/{commentId}` | Get a single comment |
-| `POST` | `/comments` | Add a comment |
-| `PATCH` | `/comments/{commentId}` | Update comment text |
-| `DELETE` | `/comments/{commentId}` | Delete a comment |
-
-### Key request bodies
-
-**Edit text**
-```json
-{
-  "anchor": { "text": "Hello", "paragraphIndex": 0, "charStart": 0, "charEnd": 5 },
-  "newText": "Hi"
-}
-```
-
-**Add comment**
-```json
-{
-  "commentText": "Consider rephrasing this.",
-  "author": "AI Agent",
-  "anchor": { "text": "Hello", "paragraphIndex": 0, "charStart": 0, "charEnd": 5 }
-}
-```
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `LIBREOFFICE_HOST` | `localhost` | UNO socket host |
-| `LIBREOFFICE_PORT` | `2002` | UNO socket port |
-| `MINIO_HOST` | `localhost` | MinIO host |
-| `MINIO_PORT` | `9000` | MinIO port |
-| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO credentials |
-| `MINIO_SECRET_KEY` | `minioadmin` | MinIO credentials |
-| `MINIO_BUCKET` | `documents` | Bucket name |
-| `WORKSPACE_PATH` | `<project-root>/workspace` | Shared volume path (optional in dev) |
+Settings can be changed in the Options dialog or via Java system properties (`-Dliberekollab.port=8080`).
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `liberekollab.port` | `8080` | MCP server port |
+| `liberekollab.workspace` | `<tmp>/liberekollab` | Temp directory for file operations |
+
+Logs are written to `~/.config/liberekollab/` (Linux/macOS) or `%APPDATA%\liberekollab\` (Windows).
 
 ## Running tests
 
@@ -132,12 +115,27 @@ Text endpoints accept `?changeStatus=BEFORE|FUSION|AFTER` (default: `FUSION`):
 ./gradlew test
 ```
 
-Integration tests use Testcontainers and spin up real LibreOffice and MinIO containers. The LibreOffice container is reused across test runs for faster iteration.
+Integration tests spin up a real LibreOffice container via Testcontainers. The container is reused across runs for faster iteration.
+
+## Building from source
+
+```bash
+# Compile and run tests
+./gradlew test
+
+# Build the .oxt extension
+./gradlew oxt
+```
+
+Requires `libs/uno/libreoffice.jar`, copied from the host LibreOffice installation:
+
+```bash
+cp /usr/lib/libreoffice/program/classes/libreoffice.jar libs/uno/
+```
 
 ## Tech stack
 
-- **Kotlin** + **Ktor** (Netty)
-- **LibreOffice** headless via **UNO** socket
-- **MinIO** for document storage
+- **Kotlin** + **Ktor** (Netty, SSE transport)
+- **MCP Kotlin SDK** (`io.modelcontextprotocol:kotlin-sdk`)
+- **LibreOffice** UNO in-process API
 - **Testcontainers** for integration tests
-- **ktor-openapi** + **ktor-swagger-ui** for auto-generated API documentation

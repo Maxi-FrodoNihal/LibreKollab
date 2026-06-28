@@ -1,21 +1,20 @@
 # LibereKollab
 
-Kotlin/Ktor REST API that exposes LibreOffice document editing via UNO as an AI-usable tool interface. An AI agent can read text, navigate chapters/pages, edit text, read and manage comments — all via HTTP.
+Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, and manage comments — all via in-process UNO.
 
 ## Architecture
 
 ```
-HTTP Client / AI Agent
-        │
-   Ktor REST API (port 8080)
-        │
-   ┌────┴─────────────────┐
-   │                       │
-UNO socket (port 2002)   MinIO (port 9000)
-LibreOffice headless      document storage
+Claude Code CLI
+      │  MCP (SSE, localhost:8080)
+LibereKollab OXT extension
+      │  in-process UNO (no socket in production)
+LibreOffice document(s)
 ```
 
-**Scaling model:** one Kubernetes Pod (Ktor + LibreOffice sidecar) per open document. MinIO is shared centrally. The `limitedParallelism(1)` dispatcher in `LibereKollab` serializes all UNO calls — LibreOffice is not thread-safe.
+The extension implements `XJob` and starts automatically on `onFirstVisibleTask`. An `AtomicBoolean` guard prevents double-start. `McpServer.startSse()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later.
+
+`documentId` is the file name of a currently open document in LibreOffice (e.g. `report.odt`). `LibereKollab` resolves it by enumerating `XDesktop.getComponents()`.
 
 ## Package structure
 
@@ -28,14 +27,21 @@ org.msc.liberekollab
 │   │       └── properties/
 │   └── port/           # IOAPI, KollabAPI
 ├── adapter/
-│   ├── http/           # KtorServer
-│   │   ├── controller/ # IOController, KollabController
-│   │   ├── request/    # AddCommentRequest, UpdateCommentRequest, EditTextRequest
-│   │   └── response/   # Response data classes
-│   ├── uno/            # LibereKollab
-│   ├── minio/          # MinioAdapter
+│   ├── mcp/            # McpServer
+│   ├── plugin/         # LibereKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
+│   ├── uno/            # CoreKollab (abstract), LibereKollab (in-process, production)
+│   ├── local/          # LocalFileAdapter
 │   └── logging/        # LoggingKollabAPI, LoggingIOAPI
-└── Main.kt             # Entrypoint — composition root
+└── LogDirResolver.kt   # Cross-platform log directory (extends PropertyDefinerBase)
+```
+
+Test sources:
+
+```
+src/test/kotlin/
+└── org/msc/liberekollab/
+    ├── adapter/uno/TestKollab.kt   # Socket-based KollabAPI for tests
+    └── McpServerIT.kt
 ```
 
 ## Coding guidelines
@@ -44,9 +50,8 @@ org.msc.liberekollab
 
 - `domain/` has zero imports from `adapter/` — domain model and ports are framework-agnostic
 - Adapters import from `domain/port/` and `domain/model/` only — never from other adapters
-- `Main.kt` is the only composition root: the only place that instantiates concrete adapters and wires them together
-- Never reference `MinioAdapter` or `LibereKollab` outside `Main.kt` and tests — use `IOAPI` / `KollabAPI`
-- All classes that talk to external systems support constructor injection so tests can pass container coordinates. The no-arg constructor reads from `.env` via dotenv-kotlin
+- `LibereKollabPlugin` is the composition root: the only place that instantiates `LibereKollab`, `LocalFileAdapter`, and `McpServer` and wires them together
+- All classes that talk to external systems support constructor injection so tests can pass container coordinates
 
 ### Kotlin style
 
@@ -57,115 +62,124 @@ org.msc.liberekollab
 
 ### I/O and concurrency
 
-- All methods on `IOAPI` that touch the network are `suspend` — wrap blocking SDK calls in `withContext(Dispatchers.IO)`
+- All methods on `IOAPI` that touch the filesystem are `suspend` — wrap blocking calls in `withContext(Dispatchers.IO)`
 - `nextId()` on `IOAPI` is NOT `suspend` — pure UUID generation, no I/O
-- UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `LibereKollab` — never call UNO from multiple coroutines concurrently
+- UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `CoreKollab` — never call UNO from multiple coroutines concurrently
 - `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests
 
-### HTTP layer
+## CoreKollab / LibereKollab / TestKollab
 
-- Controller route handlers are extracted as `private suspend fun RoutingContext.xxx()` — never inline lambdas in `registerRoutes`
-- Route registration uses `io.github.smiley4.ktoropenapi` HTTP method imports (`get`, `post`, `patch`, `delete`) — these shadow Ktor's built-in equivalents and accept an optional documentation lambda as second parameter
+`CoreKollab` is the abstract base class implementing `KollabAPI`. It holds the `libreOfficeDispatcher` and all UNO logic. Subclasses only need to implement document access:
 
-### Testing
+```kotlin
+protected abstract suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
+protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
+```
 
-- All integration tests use real containers (Testcontainers) and a real Netty server — no `testApplication`, no mocks
-- Shared infrastructure per test class: containers, `KtorServer`, and `HttpClient` initialized once via `by lazy`, started in `@BeforeAll`, stopped in `@AfterAll`
-- Tests are isolated by unique `documentId` — a shared MinIO bucket per test class is sufficient
-- Use `isBetween` for datetime ranges derived from known test data; use exact equality for content assertions
+**`LibereKollab`** (`adapter/uno/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. In `withDocumentMutating` it calls `XStorable.store()` after the block.
 
-## Workspace flow
+**`TestKollab`** (`src/test/`, socket-based) — connects to LibreOffice via UNO socket, loads documents from `IOAPI` storage into a workspace directory, uploads mutated documents back. Created via `TestKollab.viaSocket(host, port, storage, containerWorkspacePath)`.
 
-`LibereKollab` downloads from MinIO → writes to `workspacePath` (host-side) → passes `containerWorkspacePath` to LibreOffice via UNO → deletes temp file.
+## OXT packaging
 
-- **Read-only** (`getText`, `getPageCount`, etc.): use `withDocument` → calls `withWorkspaceFile` — temp file deleted after block
-- **Mutating** (`editText`, `addComment`, etc.): use `withDocumentMutating` → calls `withWorkspaceFileAndWriteback` — calls `XStorable.store()` then uploads back to MinIO before deleting
+The extension is built by `./gradlew oxt` → `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
 
-Object names in MinIO are `"${documentId}_${fileName}"`. `IOAPI.nextId()` generates the UUID; `upload(documentId, fileName, stream)` stores the object and returns the `documentId`.
+```
+LibereKollab.oxt (ZIP)
+├── liberekollab-all.jar      # fat JAR (excludes libreoffice.jar)
+├── LibereKollab.components   # UNO service registration
+├── Jobs.xcu                  # auto-start on onFirstVisibleTask
+├── OptionsDialog.xcu         # registers Extras > Optionen page
+├── dialogs/OptionsDialog.xdl # dialog layout
+├── description.xml           # extension identifier org.msc.liberekollab
+├── description-en.txt
+└── META-INF/manifest.xml
+```
 
-### Workspace paths
+`libreoffice.jar` is `compileOnly` + `testImplementation` — present for compilation and tests, excluded from the fat JAR to avoid bundling what LibreOffice already provides.
 
-Two separate path concepts exist because in dev mode the Ktor app runs on the host while LibreOffice runs in Docker:
+## Plugin lifecycle
 
-- `workspacePath` — host-side path where the JVM writes temp files. Defaults to `user.dir + "/workspace"` if `WORKSPACE_PATH` env var is not set.
-- `containerWorkspacePath` — Linux path inside the LibreOffice container (always `/workspace`). Hardcoded in the no-arg constructor.
+`LibereKollabPlugin` implements `XJob` + `XServiceInfo`. LibreOffice calls `execute()` automatically on first visible task.
 
-In production both containers mount the same Docker volume at `/workspace`, so `WORKSPACE_PATH=/workspace` is set and both paths are identical.
+- `running: AtomicBoolean` — `compareAndSet(false, true)` prevents double-start
+- `engine: EmbeddedServer<*, *>?` — holds the running Ktor server
+- `instance: LibereKollabPlugin?` — held in companion object so `OptionsHandler` can call `start()` / `close()`
+- `close()` — stops the engine, sets `engine = null`, resets `running` to `false`
+- `__create(context)` — JVM static factory required by UNO; stores `instance`
+
+`OptionsHandler` implements `XContainerWindowEventHandler` + `XServiceInfo`. Registered via `OptionsDialog.xcu`. Handles methods `"initialize"` and `"ok"`. Button `btnToggle` starts/stops the server; `btnOpenLog` opens the log file via `java.awt.Desktop.open()` (falls back to opening the directory if the log file doesn't exist yet).
+
+## Workspace / IOAPI
+
+`IOAPI` is implemented by `LocalFileAdapter` — reads and writes files directly to a local directory (`liberekollab.workspace` system property, defaults to `<tmp>/liberekollab`). `LoggingIOAPI` wraps it for structured logging.
+
+`IOAPI.ls()` — lists file names in the workspace.  
+`IOAPI.nextId()` — pure UUID, not `suspend`.  
+`IOAPI.upload(documentId, fileName, stream)` — writes the stream to `workspacePath/fileName`.  
+`IOAPI.download(documentId)` — returns an `InputStream` for the file.
+
+In `TestKollab`: `withDocument` downloads from `IOAPI` to `workspacePath`, loads via UNO `loadComponentFromURL`, runs the block, then deletes the temp file. `withDocumentMutating` additionally calls `XStorable.store()` and uploads back.
 
 ## Edit mode / Track Changes
 
-`withEnsuredEditMode(documentId)` checks `RecordChanges` and enables it if needed. It is used **exclusively for `editText`** — text body changes must be tracked so humans can review them.
+`withEnsuredEditMode(documentId)` checks `RecordChanges` and enables it if needed. Used **exclusively for `editText`**.
 
-```
-withEnsuredEditMode(documentId) {       // checks + enables RecordChanges if off
-    withDocumentMutating(documentId) {  // loads, runs block, XStorable.store(), uploads
-        // UNO text mutations here
-    }
-}
-```
+Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEditMode` — LibreOffice does not track annotation changes in its redline system.
 
-**Comments (annotations) are NOT subject to Track Changes** — `addComment`, `updateComment`, and `deleteComment` bypass `withEnsuredEditMode` entirely. LibreOffice does not track annotation add/delete/update in its redline system.
-
-- `setEditMode` / `getEditMode` are part of `KollabAPI` but **not exposed via HTTP** — `setEditMode` is called implicitly by `withEnsuredEditMode`.
-- `GET /kollab/text/{documentId}/editmode` is the only HTTP endpoint for edit mode (read-only).
+`setEditMode` / `getEditMode` are on `KollabAPI` but `setEditMode` is only called implicitly by `withEnsuredEditMode` — not exposed as an MCP tool.
 
 ## Track Changes model
 
-When `editText` runs, LibreOffice records a Delete redline (original text) and an Insert redline (new text). These are exposed via:
-
-- **`ChangeAction`** (`domain/model/change/`) — enum: `INSERT`, `DELETE`
-- **`ChangeStatus`** (`domain/model/change/`) — enum controlling which text variant is returned:
-  - `BEFORE` — original text (insertions hidden, deletions visible)
-  - `FUSION` — raw LibreOffice string including both deleted and inserted text (default)
-  - `AFTER` — text with changes applied (deletions hidden, insertions visible)
-- **`Change`** (`domain/model/change/`) — holds `action: ChangeAction`, `author`, `dateTime`, `text`, `anchor: TextAnchor`
-
-Text-reading endpoints accept `?changeStatus=BEFORE|FUSION|AFTER` as a query parameter (default: `FUSION`).
-
-Accept/reject tracked changes is intentionally **not in the API** — that is a human editorial decision made directly in LibreOffice.
+`ChangeAction` — `INSERT` / `DELETE`  
+`ChangeStatus` — `BEFORE` (deletions visible, insertions hidden) / `FUSION` (raw, default) / `AFTER` (insertions visible, deletions hidden)  
+`Change` — `action`, `author`, `dateTime`, `text`, `anchor: TextAnchor`
 
 ## Text and formatting
 
-Text-returning methods return `MarkedText` (`domain/model/text/`):
+`MarkedText(text: String, properties: List<TextProperty>)` — text-returning methods return this.
 
-```kotlin
-data class MarkedText(val text: String, val properties: List<TextProperty> = emptyList())
-```
-
-`TextProperty` is a sealed interface with `MarkIndex(paragraphIndex, from, to)` indicating the character range:
-
-```kotlin
-data class BoldProperty(val markIndex: MarkIndex) : TextProperty
-data class ItalicProperty(val markIndex: MarkIndex) : TextProperty
-data class UnderlineProperty(val markIndex: MarkIndex) : TextProperty
-data class StrikethroughProperty(val markIndex: MarkIndex) : TextProperty
-```
-
-UNO implementation: enumerate text portions, read `CharWeight`, `CharPosture`, `CharUnderline`, `CharStrikeout` properties to build the property list alongside the text string.
+`TextProperty` is a sealed interface. Implementations: `BoldProperty`, `ItalicProperty`, `UnderlineProperty`, `StrikethroughProperty` — each holds a `MarkIndex(paragraphIndex, from, to)`.
 
 ## Comments (UNO annotations)
 
-Comments are LibreOffice annotations (`com.sun.star.text.TextField.Annotation`) anchored to a `TextAnchor`.
+`TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (12-char SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"`).
 
-**`TextAnchor`** (`domain/model/`) is the domain PK for a text position:
-- `text` — the anchored string
-- `paragraphIndex` — 0-based paragraph index in document order
-- `charStart` / `charEnd` — character offsets within the paragraph
-- `id` — always computed: 12-char SHA-256 truncation of `"$text:$paragraphIndex:$charStart:$charEnd"` → used as `Comment.id`
+`Comment` — `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
 
-**`Comment`** (`domain/model/`) holds `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
+Writing: anchor resolved by walking paragraphs; annotation created via `XMultiServiceFactory`; `DateTimeValue` must be set explicitly.  
+Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementException` if not found.
 
-**Reading** (`getComments`): uses `XTextFieldsSupplier`, filters for the Annotation service, builds `TextAnchor` by creating a cursor from doc start to anchor start and counting `\n` characters. Results are sorted by `(paragraphIndex, charStart)`.
+## MCP tools
 
-**Writing** (`addComment`): resolves the anchor range by walking paragraphs to `paragraphIndex` then using `goRight`, creates the annotation field via `XMultiServiceFactory`, sets `Content`, `Author`, and `DateTimeValue` (must be set explicitly — LibreOffice does not auto-fill it via UNO). Uses `absorb = true` in `insertTextContent` to create a range annotation (not a collapsed point annotation).
+| Tool | Required params | Optional |
+|------|----------------|---------|
+| `list_documents` | — | — |
+| `get_text` | `documentId` | `changeStatus` |
+| `get_page_count` | `documentId` | — |
+| `get_chapters` | `documentId` | — |
+| `get_text_by_pages` | `documentId`, `fromPage`, `toPage` | `changeStatus` |
+| `get_text_by_chapter` | `documentId`, `chapter` | `changeStatus` |
+| `get_changes` | `documentId` | — |
+| `get_edit_mode` | `documentId` | — |
+| `edit_text` | `documentId`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd`, `newText` | `newTextProperties` |
+| `get_comments` | `documentId` | — |
+| `get_comment` | `documentId`, `commentId` | — |
+| `add_comment` | `documentId`, `commentText`, `author`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd` | — |
+| `update_comment` | `documentId`, `commentId`, `newText` | — |
+| `delete_comment` | `documentId`, `commentId` | — |
 
-**Updating** (`updateComment`): enumerates annotations, matches by anchor id, sets `Content` and updates `DateTimeValue` to now. Throws `NoSuchElementException` if not found.
+## Logging
 
-**Deleting** (`deleteComment`): enumerates annotations, matches by anchor id, calls `XText.removeTextContent`. Throws `NoSuchElementException` if not found.
+`LogDirResolver` extends `PropertyDefinerBase` (logback). Returns:
+- Linux/macOS: `~/.config/liberekollab`
+- Windows: `%APPDATA%\liberekollab`
+
+`logback.xml` writes to both console and `${logDir}/liberekollab.log`.
 
 ## UNO / LibreOffice JAR
 
-`libs/uno/libreoffice.jar` is copied from the host LibreOffice installation:
+`libs/uno/libreoffice.jar` — copied from the host LibreOffice installation:
 
 ```bash
 cp /usr/lib/libreoffice/program/classes/libreoffice.jar libs/uno/
@@ -173,153 +187,36 @@ cp /usr/lib/libreoffice/program/classes/libreoffice.jar libs/uno/
 
 Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. The old individual JARs (`ridl.jar`, `jurt.jar`, etc.) are empty stubs — do not use them.
 
-## Running locally (dev)
-
-Start MinIO + LibreOffice:
-```bash
-docker compose -f docker-compose.dev.yml up
-```
-
-Then run `Main.kt` from IntelliJ. LibreOffice is reachable at `localhost:2002`, MinIO at `localhost:9000`. Configuration is read from `.env`. No `WORKSPACE_PATH` needed — defaults to `<project-root>/workspace` which is bind-mounted into the LibreOffice container.
-
-## Running in Docker
-
-```bash
-docker compose up --build
-```
-
-App, LibreOffice, and MinIO all start as separate containers with a shared workspace volume. All three are on an isolated Docker bridge network — only `liberekollab` exposes port 8080 to the host. MinIO and LibreOffice have no `ports:` mappings and are unreachable from outside.
-
-## Swagger / OpenAPI
-
-The OpenAPI spec and Swagger UI are auto-generated from route definitions at startup using `io.github.smiley4:ktor-openapi:5.0.0` and `io.github.smiley4:ktor-swagger-ui:5.0.0`.
-
-| URL | Description |
-|-----|-------------|
-| `http://localhost:8080/swagger/index.html` | Swagger UI |
-| `http://localhost:8080/swagger` | Redirects to Swagger UI |
-| `http://localhost:8080/api.json` | Raw OpenAPI JSON spec |
-| `http://localhost:8080/guide` | AI tool usage guide (plain text Markdown) |
-
-Route documentation is declared inline in `registerRoutes` via the ktor-openapi DSL — no separate YAML file to maintain. Each route has a documentation lambda:
-
-```kotlin
-get("/path", {
-    tags = listOf("Tag")
-    summary = "Short description"
-    request { pathParameter<String>("id") { } }
-    response { code(HttpStatusCode.OK) { body<ResponseType>() } }
-}) { handler() }
-```
-
-## Tests
-
-Integration tests use Testcontainers 2.0.5 (required for Docker 29.x — older versions hardcode Docker API ≤1.32). Container reuse is enabled via `src/test/resources/testcontainers.properties`. AssertJ is used for assertions.
+## Testing
 
 ```bash
 ./gradlew test
 ```
 
-- **`KollabControllerIT`** — tests all KollabController routes via real Netty server + `HttpClient` (LibreOffice + MinIO containers, workspace bind-mounted)
-- **`IOControllerIT`** — tests all IOController routes via real Netty server + `HttpClient` (MinIO container)
+`McpServerIT` — starts a real LibreOffice container (Testcontainers, reused via `withReuse(true)`), creates a `TestKollab` via `viaSocket`, and drives the full MCP tool surface over an in-process SSE connection.
 
-Both test classes share infrastructure per class: containers, `KtorServer`, and `HttpClient` are initialized once via `by lazy` in the companion object and started in `@BeforeAll`. No `testApplication` — real Netty, real HTTP frames.
+Container reuse is enabled via `src/test/resources/testcontainers.properties`. The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
 
-The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`) and a fixed workspace path so `withReuse(true)` actually works — subsequent test runs reuse the running container instead of rebuilding.
+Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` artifact, not the old `junit-5`).
 
-## API
+## Local development
 
-### Document storage (`/documents`)
+For manual plugin testing: build the OXT, install it in a local LibreOffice, open a document, and connect Claude Code.
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/documents/health` | Health check |
-| `POST` | `/documents/upload` | Multipart upload → returns `documentId` |
-| `GET` | `/documents` | List all document IDs |
-| `GET` | `/documents/{id}` | Download raw bytes |
-| `DELETE` | `/documents/{id}` | Delete document |
+```bash
+./gradlew oxt
+# → build/oxt/LibereKollab-1.0-SNAPSHOT.oxt
+```
 
-### Kollab (`/kollab`)
+Claude Code MCP config (`~/.config/claude-code/mcp.json`):
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/kollab/health` | Health check |
-| `GET` | `/kollab/text/{documentId}?changeStatus=` | Full document text (`BEFORE`/`FUSION`/`AFTER`) |
-| `PATCH` | `/kollab/text/{documentId}` | Edit a text range (body: `EditTextRequest`) |
-| `GET` | `/kollab/text/{documentId}/changes` | List tracked changes |
-| `GET` | `/kollab/text/{documentId}/pagecount` | Number of pages |
-| `GET` | `/kollab/text/{documentId}/chapters` | List chapter headings |
-| `GET` | `/kollab/text/{documentId}/pages/{fromPage}/{toPage}?changeStatus=` | Text of page range |
-| `GET` | `/kollab/text/{documentId}/chapters/{chapter}?changeStatus=` | Text of a chapter |
-| `GET` | `/kollab/text/{documentId}/comments` | List all comments |
-| `GET` | `/kollab/text/{documentId}/comments/{commentId}` | Get single comment |
-| `POST` | `/kollab/text/{documentId}/comments` | Add a comment (body: `AddCommentRequest`) |
-| `PATCH` | `/kollab/text/{documentId}/comments/{commentId}` | Update comment text (body: `UpdateCommentRequest`) |
-| `DELETE` | `/kollab/text/{documentId}/comments/{commentId}` | Delete a comment |
-| `GET` | `/kollab/text/{documentId}/editmode` | Check if Track Changes is active |
-
-### Request bodies
-
-**`AddCommentRequest`**
 ```json
 {
-  "commentText": "...",
-  "author": "...",
-  "anchor": { "text": "...", "paragraphIndex": 0, "charStart": 7, "charEnd": 20 }
+  "mcpServers": {
+    "liberekollab": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse"
+    }
+  }
 }
 ```
-
-**`UpdateCommentRequest`**
-```json
-{ "newText": "..." }
-```
-
-**`EditTextRequest`**
-```json
-{
-  "anchor": { "text": "...", "paragraphIndex": 0, "charStart": 0, "charEnd": 5 },
-  "newText": { "text": "...", "properties": [] }
-}
-```
-
-## What is still missing (planned)
-
-- Error handling for UNO connection failures and document load errors
-
-## Outlook — LibreOffice MCP Plugin
-
-Long-term the current Ktor REST approach could be replaced by a native LibreOffice Extension that exposes the same functionality via MCP instead of HTTP. Claude Code CLI would then be the client — no browser, no Swagger, no separate container needed.
-
-**Architecture:**
-```
-Claude Code CLI
-      │  MCP protocol (stdio or localhost)
-LibreOffice Extension (.oxt)
-      │  in-process UNO (no socket)
-LibreOffice document(s)
-```
-
-**Key differences from today:**
-- Extension runs inside LibreOffice's JVM — direct in-process UNO access, no `connect()`, no `limitedParallelism` workaround
-- Kotlin compiles to JVM bytecode → Kotlin JAR works as a LibreOffice Java component out of the box (`libreoffice.jar` is already in `libs/uno/`)
-- One MCP server for all open documents — `documentId` stays as a tool parameter, resolved via `XDesktop.getComponents()` at startup
-- MinIO / container orchestration optional — local-first, no Docker required for end users
-- User interaction: work in the terminal (Claude Code), see changes live in the open LibreOffice window
-
-**What carries over unchanged:**
-- Entire domain model (`TextAnchor`, `Comment`, `MarkedText`, `Change`, etc.)
-- All UNO logic from `LibereKollab` except the `connect()` bootstrap — replaced by receiving `XComponentContext` directly from LibreOffice
-- `KollabAPI` / `IOAPI` port interfaces — adapters just swap out the transport layer
-
-## Environment variables (`.env`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `LIBREOFFICE_HOST` | `localhost` | UNO socket host |
-| `LIBREOFFICE_PORT` | `2002` | UNO socket port |
-| `MINIO_HOST` | `localhost` | MinIO host |
-| `MINIO_PORT` | `9000` | MinIO API port |
-| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO credentials |
-| `MINIO_SECRET_KEY` | `minioadmin` | MinIO credentials |
-| `MINIO_BUCKET` | `documents` | Bucket name |
-| `WORKSPACE_PATH` | `<user.dir>/workspace` | Host-side workspace path (optional in dev) |

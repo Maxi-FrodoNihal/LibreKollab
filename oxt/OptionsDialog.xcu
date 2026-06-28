@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:component-data xmlns:oor="http://openoffice.org/2001/registry"
+                    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                    oor:name="OptionsDialog" oor:package="org.openoffice.Office">
+    <node oor:name="Nodes">
+        <node oor:name="org.msc.liberekollab" oor:op="replace">
+            <prop oor:name="Label">
+                <value xml:lang="en-US">LibereKollab</value>
+                <value xml:lang="de">LibereKollab</value>
+            </prop>
+            <node oor:name="Leaves">
+                <node oor:name="McpServer" oor:op="replace">
+                    <prop oor:name="Id">
+                        <value>McpServer</value>
+                    </prop>
+                    <prop oor:name="Label">
+                        <value xml:lang="en-US">MCP Server</value>
+                        <value xml:lang="de">MCP Server</value>
+                    </prop>
+                    <prop oor:name="EventHandlerService">
+                        <value>org.msc.liberekollab.OptionsHandler</value>
+                    </prop>
+                    <prop oor:name="DialogURL">
+                        <value>vnd.sun.star.extension://org.msc.liberekollab/dialogs/OptionsDialog.xdl</value>
+                    </prop>
+                    <prop oor:name="GroupId">
+                        <value></value>
+                    </prop>
+                    <prop oor:name="GroupLabel">
+                        <value></value>
+                    </prop>
+                </node>
+            </node>
+        </node>
+    </node>
+</oor:component-data>

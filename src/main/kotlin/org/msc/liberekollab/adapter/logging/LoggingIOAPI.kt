@@ -2,6 +2,7 @@ package org.msc.liberekollab.adapter.logging
 
 import org.msc.liberekollab.domain.port.IOAPI
 import org.slf4j.LoggerFactory
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -34,5 +35,15 @@ class LoggingIOAPI(private val delegate: IOAPI) : IOAPI {
         val result = delegate.ls()
         log.info("ls() = $result")
         return result
+    }
+
+    override suspend fun <T> withReadableFile(documentId: String, block: suspend (File) -> T): T {
+        log.info("withReadableFile(documentId=$documentId)")
+        return delegate.withReadableFile(documentId, block)
+    }
+
+    override suspend fun <T> withWritableFile(documentId: String, block: suspend (File) -> T): T {
+        log.info("withWritableFile(documentId=$documentId)")
+        return delegate.withWritableFile(documentId, block)
     }
 }

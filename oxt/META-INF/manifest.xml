@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest:manifest xmlns:manifest="http://openoffice.org/2001/manifest">
+    <manifest:file-entry
+        manifest:media-type="application/vnd.sun.star.uno-components;platform=all"
+        manifest:full-path="LibereKollab.components"/>
+    <manifest:file-entry
+        manifest:media-type="application/vnd.sun.star.configuration-data"
+        manifest:full-path="Jobs.xcu"/>
+    <manifest:file-entry
+        manifest:media-type="application/vnd.sun.star.configuration-data"
+        manifest:full-path="OptionsDialog.xcu"/>
+    <manifest:file-entry
+        manifest:media-type="application/vnd.sun.star.dialog-library"
+        manifest:full-path="dialogs/"/>
+    <manifest:file-entry
+        manifest:media-type="application/vnd.sun.star.java-library"
+        manifest:full-path="liberekollab-all.jar"/>
+</manifest:manifest>
