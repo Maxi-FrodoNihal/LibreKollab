@@ -11,13 +11,12 @@
                     </prop>
                     <prop oor:name="Label">
                         <value xml:lang="en-US">LibereKollab MCP Server</value>
-                        <value xml:lang="de">LibereKollab MCP Server</value>
-                    </prop>
-                    <prop oor:name="EventHandlerService">
-                        <value>org.msc.liberekollab.OptionsHandler</value>
                     </prop>
                     <prop oor:name="OptionsPage">
                         <value>%origin%/dialogs/OptionsDialog.xdl</value>
+                    </prop>
+                    <prop oor:name="EventHandlerService">
+                        <value>org.msc.liberekollab.adapter.libreoffice.plugin.OptionsHandler</value>
                     </prop>
                 </node>
             </node>

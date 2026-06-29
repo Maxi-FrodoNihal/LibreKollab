@@ -4,5 +4,8 @@
         <implementation name="org.msc.liberekollab.adapter.libreoffice.plugin.LibereKollabPlugin">
             <service name="org.msc.liberekollab.LibereKollabPlugin"/>
         </implementation>
+        <implementation name="org.msc.liberekollab.adapter.libreoffice.plugin.OptionsHandler">
+            <service name="org.msc.liberekollab.OptionsHandler"/>
+        </implementation>
     </component>
 </components>

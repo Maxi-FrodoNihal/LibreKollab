@@ -1,22 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE dlg:window PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "dialog.dtd">
 <dlg:window xmlns:dlg="http://openoffice.org/2000/dialog" xmlns:script="http://openoffice.org/2000/script"
-    dlg:id="OptionsDialog" dlg:left="0" dlg:top="0" dlg:width="115" dlg:height="108"
-    dlg:closeable="true" dlg:moveable="true">
+    dlg:id="OptionsDialog" dlg:left="0" dlg:top="0" dlg:width="260" dlg:height="96"
+    dlg:closeable="true" dlg:moveable="true" dlg:withtitlebar="false">
     <dlg:bulletinboard>
         <dlg:text dlg:id="lblStatus" dlg:tab-index="0"
-            dlg:left="5" dlg:top="6" dlg:width="105" dlg:height="22"
+            dlg:left="5" dlg:top="6" dlg:width="250" dlg:height="22"
             dlg:value="Status:"/>
         <dlg:text dlg:id="lblPort" dlg:tab-index="1"
-            dlg:left="5" dlg:top="38" dlg:width="35" dlg:height="12"
+            dlg:left="5" dlg:top="36" dlg:width="30" dlg:height="12"
             dlg:value="Port:"/>
         <dlg:textfield dlg:id="txtPort" dlg:tab-index="2"
-            dlg:left="45" dlg:top="36" dlg:width="60" dlg:height="14"/>
+            dlg:left="40" dlg:top="34" dlg:width="55" dlg:height="14"/>
         <dlg:button dlg:id="btnToggle" dlg:tab-index="3"
-            dlg:left="5" dlg:top="58" dlg:width="105" dlg:height="16"
-            dlg:value="Start server"/>
+            dlg:left="5" dlg:top="54" dlg:width="90" dlg:height="16"
+            dlg:value="Start server">
+            <script:event script:event-name="on-performaction" script:macro-name="vnd.sun.star.UNO:toggle" script:language="UNO"/>
+        </dlg:button>
         <dlg:button dlg:id="btnOpenLog" dlg:tab-index="4"
-            dlg:left="5" dlg:top="82" dlg:width="105" dlg:height="16"
-            dlg:value="Open log file"/>
+            dlg:left="5" dlg:top="76" dlg:width="90" dlg:height="16"
+            dlg:value="Open log file">
+            <script:event script:event-name="on-performaction" script:macro-name="vnd.sun.star.UNO:openLog" script:language="UNO"/>
+        </dlg:button>
     </dlg:bulletinboard>
 </dlg:window>

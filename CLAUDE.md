@@ -12,7 +12,7 @@ LibereKollab OXT extension
 LibreOffice document(s)
 ```
 
-The extension implements `XJob` and starts automatically on `onFirstVisibleTask`. An `AtomicBoolean` guard prevents double-start. `McpServer.startSse()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later.
+The extension implements `XJob` and is registered via `Jobs.xcu` to run on `onFirstVisibleTask`. `execute()` is a no-op — it only logs that the plugin is ready. The MCP server is **not** started automatically; the user starts it manually from the Options dialog (`Extras > Optionen > Internet > MCP Server`). `McpServer.startSse()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later. An `AtomicBoolean` guard prevents double-start.
 
 `documentId` is the file name of a currently open document in LibreOffice (e.g. `report.odt`). `LibereKollab` resolves it by enumerating `XDesktop.getComponents()`.
 
@@ -84,28 +84,52 @@ The extension is built by `./gradlew oxt` → `build/oxt/LibereKollab-1.0-SNAPSH
 ```
 LibereKollab.oxt (ZIP)
 ├── liberekollab-all.jar      # fat JAR (excludes libreoffice.jar)
-├── LibereKollab.components   # UNO service registration
-├── Jobs.xcu                  # auto-start on onFirstVisibleTask
-├── OptionsDialog.xcu         # registers Extras > Optionen page
-├── dialogs/OptionsDialog.xdl # dialog layout
+├── LibereKollab.components   # UNO service registration (plugin + options handler)
+├── Jobs.xcu                  # registers XJob trigger on onFirstVisibleTask
+├── OptionsDialog.xcu         # registers Extras > Optionen > Internet > MCP Server leaf
+├── dialogs/OptionsDialog.xdl # dialog layout (dlg:text labels, script:event buttons)
 ├── description.xml           # extension identifier org.msc.liberekollab
 ├── description-en.txt
-└── META-INF/manifest.xml
+└── META-INF/manifest.xml     # lists: LibereKollab.components, Jobs.xcu, OptionsDialog.xcu
 ```
 
 `libreoffice.jar` is `compileOnly` + `testImplementation` — present for compilation and tests, excluded from the fat JAR to avoid bundling what LibreOffice already provides.
 
 ## Plugin lifecycle
 
-`LibereKollabPlugin` implements `XJob` + `XServiceInfo`. LibreOffice calls `execute()` automatically on first visible task.
+`LibereKollabPlugin` implements `XJob` + `XServiceInfo`. LibreOffice calls `execute()` on first visible task — the method just logs "plugin ready" and returns.
 
-- `running: AtomicBoolean` — `compareAndSet(false, true)` prevents double-start
+- `running: AtomicBoolean` — `compareAndSet(false, true)` in `start()` prevents double-start
 - `engine: EmbeddedServer<*, *>?` — holds the running Ktor server
-- `instance: LibereKollabPlugin?` — held in companion object so `OptionsHandler` can call `start()` / `close()`
+- `instance: LibereKollabPlugin?` — stored in `init { instance = this }` so `OptionsHandler` can call `start()` / `close()`
+- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads `liberekollab.port` system property (default `8080`), creates `LibereKollab` + `McpServer`, calls `startSse(port)`
 - `close()` — stops the engine, sets `engine = null`, resets `running` to `false`
-- `__create(context)` — JVM static factory required by UNO; stores `instance`
+- `__getComponentFactory(implementationName)` — JVM static factory required by UNO; dispatches both `LibereKollabPlugin` and `OptionsHandler` by implementation name
 
-`OptionsHandler` implements `XContainerWindowEventHandler` + `XServiceInfo`. Registered via `OptionsDialog.xcu`. Handles methods `"initialize"` and `"ok"`. Button `btnToggle` starts/stops the server; `btnOpenLog` opens the log file via `java.awt.Desktop.open()` (falls back to opening the directory if the log file doesn't exist yet).
+`OptionsHandler` implements `WeakBase() + XContainerWindowEventHandler + XServiceInfo`. Registered via `OptionsDialog.xcu`. `WeakBase` provides `XTypeProvider`/`XInterface` required for UNO marshalling.
+
+- `callHandlerMethod(window: XWindow, eventObject: Any, method: String)` — LibreOffice calls this for all dialog events:
+  - `"external_event"` — initialization lifecycle events. `AnyConverter.toString(eventObject)` yields `"initialize"`, `"back"`, or `"ok"`. `"initialize"`/`"back"` call `initialize()` (stores `XControlContainer`, sets `MultiLine=true` on status label, refreshes UI); `"ok"` saves the port value.
+  - `"toggle"` — called directly when btnToggle fires (via `script:event` in XDL). Starts or stops the server.
+  - `"openLog"` — called directly when btnOpenLog fires. Opens the log file via `java.awt.Desktop.open()` (falls back to the directory if the file does not exist yet).
+- `getSupportedMethodNames()` must return every method name routed to this handler: `["external_event", "toggle", "openLog"]`
+- `EventHandlerService` in `OptionsDialog.xcu` must be the **implementation name** (fully qualified class name), not the service name
+
+## XDL dialog format
+
+The Options dialog is embedded in LibreOffice's Options tree — not a floating window. Key rules:
+
+- `dlg:withtitlebar="false"` — required for embedded Options page dialogs; omitting it causes load failures
+- `dlg:text` — correct element for static labels. `dlg:fixedtext` is **invalid** and causes a silent SAX parse error at EOF (`Noerror` at last line), preventing the entire dialog from loading
+- Both XML namespaces must be declared on `dlg:window`: `xmlns:dlg="..."` and `xmlns:script="..."`
+- Button events use `script:event` child elements:
+  ```xml
+  <script:event script:event-name="on-performaction"
+                script:macro-name="vnd.sun.star.UNO:toggle"
+                script:language="UNO"/>
+  ```
+  The method name after `vnd.sun.star.UNO:` must appear in `getSupportedMethodNames()`
+- LibreOffice does **not** support extension-added top-level nodes in the Options dialog tree. Register under an existing node such as `Internet` via `OptionsDialog.xcu`
 
 ## Edit mode / Track Changes
 
@@ -187,12 +211,14 @@ Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` 
 
 ## Local development
 
-For manual plugin testing: build the OXT, install it in a local LibreOffice, open a document, and connect Claude Code.
+For manual plugin testing: build the OXT, install it in a local LibreOffice, start the server from the Options dialog, open a document, and connect Claude Code.
 
 ```bash
 ./gradlew oxt
 # → build/oxt/LibereKollab-1.0-SNAPSHOT.oxt
 ```
+
+Install via `Extras > Extension Manager > Add...`, restart LibreOffice, then open the Options dialog (`Extras > Optionen > Internet > MCP Server`) and click **Start server**.
 
 Register the MCP server in Claude Code:
 

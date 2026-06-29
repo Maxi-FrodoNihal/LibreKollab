@@ -8,5 +8,5 @@
         manifest:full-path="Jobs.xcu"/>
     <manifest:file-entry
         manifest:media-type="application/vnd.sun.star.configuration-data"
-        manifest:full-path="Addons.xcu"/>
+        manifest:full-path="OptionsDialog.xcu"/>
 </manifest:manifest>

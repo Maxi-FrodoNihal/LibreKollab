@@ -4,7 +4,7 @@ A LibreOffice extension (.oxt) that exposes document editing as [MCP](https://mo
 
 ## What it does
 
-LibereKollab bridges LibreOffice and AI agents. The extension starts an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
+LibereKollab bridges LibreOffice and AI agents. The extension embeds an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
 
 - **Read** full text, specific pages, or individual chapters
 - **Edit** text ranges — all edits are recorded as LibreOffice tracked changes for human review
@@ -42,23 +42,32 @@ The extension is written to `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
 
 ### Install in LibreOffice
 
-`Extras > Extension Manager > Add...` → select the `.oxt` file.
+`Extras > Extension Manager > Add...` → select the `.oxt` file, restart LibreOffice.
 
-The MCP server starts automatically the next time LibreOffice opens a document.
+### Start the MCP server
 
-### Configure Claude Code
+The server does **not** start automatically. Open the settings page and click **Start server**:
+
+`Extras > Optionen > Internet > LibereKollab MCP Server`
+
+### Connect Claude Code
 
 ```bash
 claude mcp add --transport sse --scope user liberekollab http://localhost:8080/sse
 ```
 
-This registers the server globally for all your Claude Code sessions. Alternatively, ask Claude Code directly: *"Add the liberekollab MCP server"* and it will run this command for you.
+This registers the server globally for all your Claude Code sessions.
 
-## Options dialog
+## Settings
 
-`Extras > Optionen > LibereKollab > MCP Server`
+`Extras > Optionen > Internet > LibereKollab MCP Server`
 
-Shows the current status, lets you change the port, start/stop the server, and open the log file.
+| Control | Description |
+|---------|-------------|
+| Status | Shows whether the server is running and on which port |
+| Port | Port the MCP server listens on (default: 8080) |
+| Start / Stop server | Toggles the server; port change takes effect on next start |
+| Open log file | Opens `~/.config/liberekollab/liberekollab.log` |
 
 ## Available tools
 
@@ -93,13 +102,11 @@ Text-reading tools accept an optional `changeStatus` parameter:
 
 ## Configuration
 
-Settings can be changed in the Options dialog or via Java system properties (`-Dliberekollab.port=8080`).
-
 | Property | Default | Description |
 |----------|---------|-------------|
 | `liberekollab.port` | `8080` | MCP server port |
 
-Logs are written to `~/.config/liberekollab/` (Linux/macOS) or `%APPDATA%\liberekollab\` (Windows).
+Logs are written to `~/.config/liberekollab/liberekollab.log` (Linux/macOS) or `%APPDATA%\liberekollab\liberekollab.log` (Windows).
 
 ## Running tests
 
