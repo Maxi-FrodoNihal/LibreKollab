@@ -13,6 +13,7 @@ import com.sun.star.text.XTextContent
 import com.sun.star.text.XTextDocument
 import com.sun.star.text.XTextFieldsSupplier
 import com.sun.star.text.XTextRange
+import com.sun.star.text.XTextRangeCompare
 import com.sun.star.text.XTextViewCursorSupplier
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.util.DateTime
@@ -91,19 +92,23 @@ abstract class CoreKollab : KollabAPI {
                             "Redline" -> {
                                 val isStart = propSet.getPropertyValue("IsStart") as? Boolean ?: false
                                 if (isStart) {
-                                    redlineAction = when (propSet.getPropertyValue("RedlineType") as? String) {
+                                    val action = when (propSet.getPropertyValue("RedlineType") as? String) {
                                         "Insert" -> ChangeAction.INSERT
                                         "Delete" -> ChangeAction.DELETE
                                         else -> null
                                     }
-                                    redlineAuthor = propSet.getPropertyValue("RedlineAuthor") as? String ?: ""
-                                    val dt = propSet.getPropertyValue("RedlineDateTime") as? DateTime
-                                    redlineDateTime = dt?.let {
-                                        LocalDateTime(it.Year.toInt(), it.Month.toInt(), it.Day.toInt(),
-                                            it.Hours.toInt(), it.Minutes.toInt(), it.Seconds.toInt())
+                                    if (action != null) {
+                                        redlineAction = action
+                                        redlineAuthor = propSet.getPropertyValue("RedlineAuthor") as? String ?: ""
+                                        val dt = propSet.getPropertyValue("RedlineDateTime") as? DateTime
+                                        redlineDateTime = dt?.let {
+                                            LocalDateTime(it.Year.toInt(), it.Month.toInt(), it.Day.toInt(),
+                                                it.Hours.toInt(), it.Minutes.toInt(), it.Seconds.toInt())
+                                        }
+                                        redlineText = StringBuilder()
+                                        redlineStart = charOffset
                                     }
-                                    redlineText = StringBuilder()
-                                    redlineStart = charOffset
+                                    // unknown type (e.g. "Format") — keep current state and keep accumulating
                                 } else {
                                     val text = redlineText.toString()
                                     if (redlineAction != null && redlineDateTime != null && text.isNotEmpty()) {
@@ -131,16 +136,20 @@ abstract class CoreKollab : KollabAPI {
             }
         }
 
-    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText) {
+    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String) {
         withEnsuredEditMode(documentId) {
             withContext(libreOfficeDispatcher) {
                 withDocumentMutating(documentId) { textDoc ->
-                    resolveAnchorRange(textDoc, anchor).setString(newText.text)
-                    applyFormatting(textDoc, anchor, newText)
+                    withAuthor(author) {
+                        resolveAnchorRange(textDoc, anchor).setString(newText.text)
+                        applyFormatting(textDoc, anchor, newText)
+                    }
                 }
             }
         }
     }
+
+    protected open fun withAuthor(author: String, block: () -> Unit) = block()
 
     override suspend fun getPageCount(documentId: String): Int = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
@@ -373,13 +382,23 @@ abstract class CoreKollab : KollabAPI {
     }
 
     protected fun buildTextAnchor(textDoc: XTextDocument, anchorRange: XTextRange): TextAnchor {
-        val cursor = textDoc.text.createTextCursorByRange(anchorRange.start)
-        cursor.gotoStart(true)
-        val textBefore = cursor.string
-        val paragraphIndex = textBefore.count { it == '\n' }
-        val charStart = textBefore.substringAfterLast('\n', textBefore).length
-        val charEnd = charStart + anchorRange.string.length
-        return TextAnchor(anchorRange.string, paragraphIndex, charStart, charEnd)
+        val compare = UnoRuntime.queryInterface(XTextRangeCompare::class.java, textDoc.text)
+        val paragraphList = mutableListOf<XTextRange>()
+        val paraEnum = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
+            .createEnumeration()
+        while (paraEnum.hasMoreElements())
+            paragraphList.add(UnoRuntime.queryInterface(XTextRange::class.java, paraEnum.nextElement()))
+
+        val paragraphIndex = paragraphList.indexOfLast { para ->
+            compare.compareRegionStarts(anchorRange.start, para.start) <= 0
+        }.takeIf { it >= 0 } ?: 0
+
+        val paraStartCursor = textDoc.text.createTextCursorByRange(paragraphList[paragraphIndex].start)
+        paraStartCursor.gotoStart(true)
+        val anchorStartCursor = textDoc.text.createTextCursorByRange(anchorRange.start)
+        anchorStartCursor.gotoStart(true)
+        val charStart = anchorStartCursor.string.length - paraStartCursor.string.length
+        return TextAnchor(anchorRange.string, paragraphIndex, charStart, charStart + anchorRange.string.length)
     }
 
     private fun pageCursorOf(textDoc: XTextDocument): XPageCursor {

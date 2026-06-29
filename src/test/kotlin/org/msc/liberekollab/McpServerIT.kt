@@ -147,7 +147,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `list_documents includes uploaded document`() {
+    fun `T01 list_documents includes uploaded document`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
             val result = tool("list_documents")
@@ -156,7 +156,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_text returns document text`() {
+    fun `T02 get_text returns document text`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
             val markedText = Json.decodeFromString(MarkedText.serializer(), tool("get_text", buildJsonObject { put("documentId", documentId) }))
@@ -165,7 +165,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `editText replaces text range and changeStatus variants reflect the change`() {
+    fun `T03 editText replaces text range and changeStatus variants reflect the change`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
             tool("edit_text", buildJsonObject {
@@ -192,7 +192,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_changes returns tracked changes after edit`() {
+    fun `T04 get_changes returns tracked changes after edit`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
             tool("edit_text", buildJsonObject {
@@ -202,6 +202,7 @@ class McpServerIT {
                 put("anchorCharStart", 0)
                 put("anchorCharEnd", 5)
                 put("newText", "Tschüss")
+                put("author", "Max Mustermann")
             })
 
             val json = tool("get_changes", buildJsonObject { put("documentId", documentId) })
@@ -209,12 +210,14 @@ class McpServerIT {
             assertThat(changes).hasSize(2)
             assertThat(changes.map { it.action }).containsExactlyInAnyOrder(ChangeAction.DELETE, ChangeAction.INSERT)
             assertThat(changes.first { it.action == ChangeAction.DELETE }.text).isEqualTo("Hallo")
+            assertThat(changes.first { it.action == ChangeAction.DELETE }.author).isEqualTo("Max Mustermann")
             assertThat(changes.first { it.action == ChangeAction.INSERT }.text).isEqualTo("Tschüss")
+            assertThat(changes.first { it.action == ChangeAction.INSERT }.author).isEqualTo("Max Mustermann")
         }
     }
 
     @Test
-    fun `get_page_count returns correct page count`() {
+    fun `T05 get_page_count returns correct page count`() {
         runBlocking {
             val documentId = upload("test_three_pages.odt")
             val count = tool("get_page_count", buildJsonObject { put("documentId", documentId) })
@@ -223,7 +226,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_chapters returns all chapter headings`() {
+    fun `T06 get_chapters returns all chapter headings`() {
         runBlocking {
             val documentId = upload("test_two_chapters.odt")
             val chapters = tool("get_chapters", buildJsonObject { put("documentId", documentId) })
@@ -232,32 +235,32 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_text_by_pages returns text of given page`() {
+    fun `T07 get_text_by_pages returns text of given page`() {
         runBlocking {
             val documentId = upload("test_three_pages.odt")
-            val text = tool("get_text_by_pages", buildJsonObject {
+            val markedText = Json.decodeFromString(MarkedText.serializer(), tool("get_text_by_pages", buildJsonObject {
                 put("documentId", documentId)
                 put("fromPage", 2)
                 put("toPage", 2)
-            })
-            assertThat(text.trim()).isEqualTo("Text Seite 2")
+            }))
+            assertThat(markedText.text.trim()).isEqualTo("Text Seite 2")
         }
     }
 
     @Test
-    fun `get_text_by_chapter returns text of given chapter`() {
+    fun `T08 get_text_by_chapter returns text of given chapter`() {
         runBlocking {
             val documentId = upload("test_two_chapters.odt")
-            val text = tool("get_text_by_chapter", buildJsonObject {
+            val markedText = Json.decodeFromString(MarkedText.serializer(), tool("get_text_by_chapter", buildJsonObject {
                 put("documentId", documentId)
                 put("chapter", "Kapitel 1 Test Überschrift Hallo")
-            })
-            assertThat(text.trim()).isEqualTo("Das ist der Text für Kapitel 1")
+            }))
+            assertThat(markedText.text.trim()).isEqualTo("Das ist der Text für Kapitel 1")
         }
     }
 
     @Test
-    fun `add_comment inserts comment at text anchor`() {
+    fun `T09 add_comment inserts comment at text anchor`() {
         runBlocking {
             val documentId = upload("test_add_comment.odt")
             tool("add_comment", buildJsonObject {
@@ -281,7 +284,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_comment returns single comment by id`() {
+    fun `T10 get_comment returns single comment by id`() {
         runBlocking {
             val documentId = upload("test_three_comments.odt")
             val allJson = tool("get_comments", buildJsonObject { put("documentId", documentId) })
@@ -298,7 +301,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `update_comment changes text`() {
+    fun `T11 update_comment changes text`() {
         runBlocking {
             val documentId = upload("test_with_comment.odt")
             val beforeJson = tool("get_comments", buildJsonObject { put("documentId", documentId) })
@@ -319,7 +322,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `delete_comment removes comment from document`() {
+    fun `T12 delete_comment removes comment from document`() {
         runBlocking {
             val documentId = upload("test_with_comment.odt")
             val beforeJson = tool("get_comments", buildJsonObject { put("documentId", documentId) })
@@ -339,7 +342,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_text extracts text formatting properties`() {
+    fun `T13 get_text extracts text formatting properties`() {
         runBlocking {
             val documentId = upload("test_text_properties.odt")
             val markedText = Json.decodeFromString(MarkedText.serializer(), tool("get_text", buildJsonObject { put("documentId", documentId) }))
@@ -360,7 +363,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `edit_text inserts text with formatting property`() {
+    fun `T14 edit_text inserts text with formatting property`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
             tool("edit_text", buildJsonObject {
@@ -389,7 +392,7 @@ class McpServerIT {
     }
 
     @Test
-    fun `edit_text removes formatting when replacing with plain text`() {
+    fun `T15 edit_text removes formatting when replacing with plain text`() {
         runBlocking {
             val documentId = upload("test_text_properties.odt")
             tool("edit_text", buildJsonObject {
@@ -410,7 +413,60 @@ class McpServerIT {
     }
 
     @Test
-    fun `get_comments returns all comments with correct data`() {
+    fun `T16 get_changes returns author and full text for replacement with mixed formatting`() {
+        // LibreOffice stores the whole replacement as one INSERT redline regardless of
+        // internal formatting — "Tschüss Welt" is one tracked change, not two.
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "Hallo")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 0)
+                put("anchorCharEnd", 5)
+                put("newText", "Tschüss Welt")
+                put("newTextProperties", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "bold")
+                        put("markIndex", buildJsonObject { put("paragraphIndex", 0); put("from", 8); put("to", 12) })
+                    })
+                })
+                put("author", "Test Author")
+            })
+
+            val json = tool("get_changes", buildJsonObject { put("documentId", documentId) })
+            val changes = Json.decodeFromString(ListSerializer(Change.serializer()), json)
+            assertThat(changes).hasSize(2)
+            assertThat(changes.first { it.action == ChangeAction.DELETE }.text).isEqualTo("Hallo")
+            assertThat(changes.first { it.action == ChangeAction.INSERT }.text).isEqualTo("Tschüss Welt")
+            assertThat(changes).allMatch { it.author == "Test Author" }
+        }
+    }
+
+    @Test
+    fun `T17 comment paragraph index is consistent between add_comment and get_comments`() {
+        runBlocking {
+            val documentId = upload("test_text_properties.odt")
+            tool("add_comment", buildJsonObject {
+                put("documentId", documentId)
+                put("commentText", "Paragraph index round-trip")
+                put("author", "Test")
+                put("anchorText", "kursiver")
+                put("anchorParagraphIndex", 1)
+                put("anchorCharStart", 12)
+                put("anchorCharEnd", 20)
+            })
+
+            val json = tool("get_comments", buildJsonObject { put("documentId", documentId) })
+            val comments = Json.decodeFromString(ListSerializer(Comment.serializer()), json)
+            assertThat(comments).hasSize(1)
+            assertThat(comments[0].anchor).isEqualTo(TextAnchor("kursiver", 1, 12, 20))
+        }
+    }
+
+    @Test
+    fun `T18 get_comments returns all comments with correct data`() {
         runBlocking {
             val documentId = upload("test_three_comments.odt")
             val json = tool("get_comments", buildJsonObject { put("documentId", documentId) })
@@ -435,6 +491,40 @@ class McpServerIT {
             assertThat(comments[2].content).isEqualTo("Das ist korrekt")
             assertThat(comments[2].dateTime).isBetween(first, last)
             assertThat(comments[2].anchor).isEqualTo(TextAnchor("Text3", 10, 8, 13))
+        }
+    }
+
+    @Test
+    fun `T19 get_changes returns all inserts when pure insert has mixed formatting`() {
+        // Pure insert (charStart==charEnd) with plain + bold text.
+        // LibreOffice splits the insertion into separate tracked changes per format run;
+        // getChanges must return all of them (the Format redline must not reset accumulation state).
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "Hallo")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 5)
+                put("anchorCharEnd", 5)
+                put("newText", " Dann: Dunkelheit.")
+                put("newTextProperties", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "bold")
+                        put("markIndex", buildJsonObject { put("paragraphIndex", 0); put("from", 7); put("to", 18) })
+                    })
+                })
+                put("author", "Test Author")
+            })
+
+            val json = tool("get_changes", buildJsonObject { put("documentId", documentId) })
+            val changes = Json.decodeFromString(ListSerializer(Change.serializer()), json)
+            val insertChanges = changes.filter { it.action == ChangeAction.INSERT }
+            assertThat(changes.none { it.action == ChangeAction.DELETE }).isTrue()
+            assertThat(insertChanges.size).isGreaterThanOrEqualTo(2)
+            assertThat(insertChanges.joinToString("") { it.text }).isEqualTo(" Dann: Dunkelheit.")
+            assertThat(insertChanges).allMatch { it.author == "Test Author" }
         }
     }
 }

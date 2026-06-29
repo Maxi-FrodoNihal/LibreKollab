@@ -14,7 +14,7 @@ import org.msc.liberekollab.domain.model.text.MarkedText
 interface KollabAPI {
     suspend fun listDocuments(): List<String>
 
-    suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText)
+    suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String = "")
 
     suspend fun getChanges(documentId: String): List<Change>
     suspend fun getPageCount(documentId: String): Int

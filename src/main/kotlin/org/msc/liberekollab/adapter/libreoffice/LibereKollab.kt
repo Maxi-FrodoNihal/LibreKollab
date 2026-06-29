@@ -1,13 +1,17 @@
 package org.msc.liberekollab.adapter.libreoffice
 
+import com.sun.star.beans.PropertyValue
+import com.sun.star.beans.XPropertySet
 import com.sun.star.container.XEnumerationAccess
 import com.sun.star.frame.XDesktop
 import com.sun.star.frame.XModel
 import com.sun.star.frame.XStorable
 import com.sun.star.lang.XMultiComponentFactory
+import com.sun.star.lang.XMultiServiceFactory
 import com.sun.star.text.XTextDocument
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
+import com.sun.star.util.XChangesBatch
 import kotlinx.coroutines.withContext
 
 class LibereKollab(private val context: XComponentContext) : CoreKollab() {
@@ -46,6 +50,31 @@ class LibereKollab(private val context: XComponentContext) : CoreKollab() {
 
     override suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T =
         withContext(libreOfficeDispatcher) { block(findDocument(documentId)) }
+
+    override fun withAuthor(author: String, block: () -> Unit) {
+        if (author.isEmpty()) { block(); return }
+        val configProvider = UnoRuntime.queryInterface(
+            XMultiServiceFactory::class.java,
+            context.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", context)
+        )
+        val nodeArg = PropertyValue().apply { Name = "nodepath"; Value = "/org.openoffice.UserProfile/Data" }
+        val access = UnoRuntime.queryInterface(
+            XPropertySet::class.java,
+            configProvider.createInstanceWithArguments("com.sun.star.configuration.ConfigurationUpdateAccess", arrayOf(nodeArg))
+        )
+        val oldFirst = access.getPropertyValue("givenname") as String
+        val oldLast = access.getPropertyValue("sn") as String
+        try {
+            access.setPropertyValue("givenname", author)
+            access.setPropertyValue("sn", "")
+            UnoRuntime.queryInterface(XChangesBatch::class.java, access).commitChanges()
+            block()
+        } finally {
+            access.setPropertyValue("givenname", oldFirst)
+            access.setPropertyValue("sn", oldLast)
+            UnoRuntime.queryInterface(XChangesBatch::class.java, access).commitChanges()
+        }
+    }
 
     override suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T =
         withContext(libreOfficeDispatcher) {

@@ -29,14 +29,15 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
         return result
     }
 
-    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText) {
-        log.info("editText(documentId=$documentId, anchor=$anchor, newText=\"${preview(newText.text)}\")")
-        delegate.editText(documentId, anchor, newText)
+    override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String) {
+        log.info("editText(documentId=$documentId, anchor=$anchor, author=$author, newText=\"${preview(newText.text)}\")")
+        delegate.editText(documentId, anchor, newText, author)
     }
 
     override suspend fun getChanges(documentId: String): List<Change> {
-        log.info("getChanges(documentId=$documentId)")
-        return delegate.getChanges(documentId)
+        val result = delegate.getChanges(documentId)
+        log.info("getChanges(documentId=$documentId) = ${result.size} changes")
+        return result
     }
 
     override suspend fun getPageCount(documentId: String): Int {
@@ -74,8 +75,9 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
     }
 
     override suspend fun getComments(documentId: String): List<Comment> {
-        log.info("getComments(documentId=$documentId)")
-        return delegate.getComments(documentId)
+        val result = delegate.getComments(documentId)
+        log.info("getComments(documentId=$documentId) = ${result.size} comments")
+        return result
     }
 
     override suspend fun getComment(documentId: String, commentId: String): Comment? {

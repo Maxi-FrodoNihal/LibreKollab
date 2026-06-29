@@ -165,7 +165,7 @@ class McpServer(private val kollab: KollabAPI) {
 
         server.addTool(
             name = "edit_text",
-            description = "Replace a text range in a document. Changes are tracked. Provide the anchor (exact text and its paragraph/character position) and the replacement.",
+            description = "Replace a text range in a document. Changes are tracked. Anchor only the exact range you want to replace — not the surrounding paragraph. For a pure insertion (no deletion), set anchorCharStart == anchorCharEnd at the insertion point and provide only the new text as newText. The anchor range will be deleted and replaced by newText.",
             inputSchema = ToolSchema(
                 properties = buildJsonObject {
                     put("documentId", buildJsonObject { put("type", "string") })
@@ -176,8 +176,9 @@ class McpServer(private val kollab: KollabAPI) {
                     put("newText", buildJsonObject { put("type", "string") })
                     put("newTextProperties", buildJsonObject {
                         put("type", "array")
-                        put("description", "optional formatting: [{\"type\":\"bold|italic|underline|strikethrough\",\"markIndex\":{\"paragraphIndex\":0,\"from\":0,\"to\":N}}]")
+                        put("description", "optional formatting for newText: [{\"type\":\"bold|italic|underline|strikethrough\",\"markIndex\":{\"paragraphIndex\":0,\"from\":0,\"to\":N}}]. paragraphIndex is 0-based relative to newText, from/to are character offsets within that paragraph.")
                     })
+                    put("author", buildJsonObject { put("type", "string"); put("description", "author name attached to the tracked change") })
                 },
                 required = listOf("documentId", "anchorText", "anchorParagraphIndex", "anchorCharStart", "anchorCharEnd", "newText")
             )
@@ -277,7 +278,7 @@ class McpServer(private val kollab: KollabAPI) {
         val toPage = args["toPage"]!!.jsonPrimitive.int
         val changeStatus = args["changeStatus"]?.jsonPrimitive?.content
             ?.let { ChangeStatus.valueOf(it) } ?: ChangeStatus.FUSION
-        return CallToolResult(content = listOf(TextContent(kollab.getTextByPages(documentId, fromPage, toPage, changeStatus).text)))
+        return CallToolResult(content = listOf(TextContent(Json.encodeToString(MarkedText.serializer(), kollab.getTextByPages(documentId, fromPage, toPage, changeStatus)))))
     }
 
     private suspend fun getTextByChapter(args: JsonObject): CallToolResult {
@@ -285,7 +286,7 @@ class McpServer(private val kollab: KollabAPI) {
         val chapter = args["chapter"]!!.jsonPrimitive.content
         val changeStatus = args["changeStatus"]?.jsonPrimitive?.content
             ?.let { ChangeStatus.valueOf(it) } ?: ChangeStatus.FUSION
-        return CallToolResult(content = listOf(TextContent(kollab.getTextByChapter(documentId, chapter, changeStatus).text)))
+        return CallToolResult(content = listOf(TextContent(Json.encodeToString(MarkedText.serializer(), kollab.getTextByChapter(documentId, chapter, changeStatus)))))
     }
 
     private suspend fun getChanges(args: JsonObject): CallToolResult {
@@ -311,7 +312,8 @@ class McpServer(private val kollab: KollabAPI) {
         val properties: List<TextProperty> = args["newTextProperties"]
             ?.let { Json.decodeFromString(ListSerializer(TextProperty.serializer()), it.toString()) }
             ?: emptyList()
-        kollab.editText(documentId, anchor, MarkedText(args["newText"]!!.jsonPrimitive.content, properties))
+        val author = args["author"]?.jsonPrimitive?.content ?: ""
+        kollab.editText(documentId, anchor, MarkedText(args["newText"]!!.jsonPrimitive.content, properties), author)
         return CallToolResult(content = listOf(TextContent("ok")))
     }
 
