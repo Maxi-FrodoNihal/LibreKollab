@@ -5,6 +5,7 @@
         </encoder>
     </appender>
     <logger name="io.ktor" level="WARN"/>
+    <logger name="FeatureRegistry[Tool]" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>

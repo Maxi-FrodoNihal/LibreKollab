@@ -30,10 +30,9 @@ import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
-import org.msc.liberekollab.domain.port.IOAPI
-import org.msc.liberekollab.domain.port.KollabAPI
+import org.msc.liberekollab.domain.KollabAPI
 
-class McpServer(private val kollab: KollabAPI, private val io: IOAPI) {
+class McpServer(private val kollab: KollabAPI) {
 
     fun startSse(port: Int): EmbeddedServer<*, *> =
         embeddedServer(Netty, port = port) {
@@ -245,7 +244,7 @@ class McpServer(private val kollab: KollabAPI, private val io: IOAPI) {
     }
 
     private suspend fun listDocuments(): CallToolResult {
-        val docs = io.ls()
+        val docs = kollab.listDocuments()
         return CallToolResult(content = listOf(TextContent(docs.joinToString("\n"))))
     }
 

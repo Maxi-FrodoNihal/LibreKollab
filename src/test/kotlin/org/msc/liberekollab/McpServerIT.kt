@@ -28,9 +28,9 @@ import kotlinx.serialization.json.put
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
-import org.msc.liberekollab.adapter.local.LocalFileAdapter
+import org.msc.liberekollab.adapter.logging.LoggingKollabAPI
 import org.msc.liberekollab.adapter.mcp.McpServer
-import org.msc.liberekollab.adapter.uno.TestKollab
+import org.msc.liberekollab.adapter.libreoffice.TestKollab
 import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
@@ -45,11 +45,12 @@ import org.testcontainers.containers.GenericContainer
 import org.testcontainers.images.builder.ImageFromDockerfile
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
-import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.UUID
 import kotlin.test.Test
 
 @Testcontainers
@@ -71,21 +72,18 @@ class McpServerIT {
                 val binds = cmd.hostConfig?.binds ?: emptyArray()
                 cmd.hostConfig?.withBinds(*binds, Bind(workspacePath, Volume(CONTAINER_WORKSPACE_PATH)))
             }
-            .withReuse(true)
-
-        private val sharedStorage: LocalFileAdapter by lazy { LocalFileAdapter(workspacePath) }
 
         private val sharedKollab: TestKollab by lazy {
             TestKollab.viaSocket(
                 host = libreoffice.host,
                 port = libreoffice.getMappedPort(2002),
-                storage = sharedStorage,
+                basePath = workspacePath,
                 containerWorkspacePath = CONTAINER_WORKSPACE_PATH
             )
         }
 
         private val sharedMcpServer: McpServer by lazy {
-            McpServer(kollab = sharedKollab, io = sharedStorage)
+            McpServer(kollab = LoggingKollabAPI(sharedKollab))
         }
 
         private val clientToServerOut = PipedOutputStream()
@@ -138,14 +136,9 @@ class McpServerIT {
     }
 
     private fun upload(resourceName: String): String {
-        val bytes = javaClass.getResourceAsStream("/$resourceName")!!.readBytes()
-        return runBlocking {
-            sharedStorage.upload(
-                sharedStorage.nextId(),
-                "${sharedStorage.nextId()}_$resourceName",
-                ByteArrayInputStream(bytes)
-            )
-        }
+        val fileName = "${UUID.randomUUID()}_$resourceName"
+        File("$workspacePath/$fileName").writeBytes(javaClass.getResourceAsStream("/$resourceName")!!.readBytes())
+        return fileName
     }
 
     private suspend fun tool(name: String, args: JsonObject = buildJsonObject {}): String {

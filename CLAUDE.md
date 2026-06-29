@@ -21,18 +21,16 @@ The extension implements `XJob` and starts automatically on `onFirstVisibleTask`
 ```
 org.msc.liberekollab
 ├── domain/
-│   ├── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
-│   │   ├── change/
-│   │   └── text/
-│   │       └── properties/
-│   └── port/           # IOAPI, KollabAPI
-├── adapter/
-│   ├── mcp/            # McpServer
-│   ├── plugin/         # LibereKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
-│   ├── uno/            # CoreKollab (abstract), LibereKollab (in-process, production)
-│   ├── local/          # LocalFileAdapter
-│   └── logging/        # LoggingKollabAPI, LoggingIOAPI
-└── LogDirResolver.kt   # Cross-platform log directory (extends PropertyDefinerBase)
+│   ├── KollabAPI.kt    # central port — see KDoc for build instructions
+│   └── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
+│       ├── change/
+│       └── text/
+│           └── properties/
+└── adapter/
+    ├── mcp/            # McpServer
+    ├── libreoffice/    # CoreKollab (abstract), LibereKollab (in-process, production)
+    │   └── plugin/     # LibereKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
+    └── logging/        # LoggingKollabAPI, LogDirResolver
 ```
 
 Test sources:
@@ -40,7 +38,7 @@ Test sources:
 ```
 src/test/kotlin/
 └── org/msc/liberekollab/
-    ├── adapter/uno/TestKollab.kt   # Socket-based KollabAPI for tests
+    ├── adapter/libreoffice/TestKollab.kt   # Socket-based KollabAPI for tests
     └── McpServerIT.kt
 ```
 
@@ -49,8 +47,8 @@ src/test/kotlin/
 ### DDD / Package rules
 
 - `domain/` has zero imports from `adapter/` — domain model and ports are framework-agnostic
-- Adapters import from `domain/port/` and `domain/model/` only — never from other adapters
-- `LibereKollabPlugin` is the composition root: the only place that instantiates `LibereKollab`, `LocalFileAdapter`, and `McpServer` and wires them together
+- Adapters import from `domain/` and `domain/model/` only — never from other adapters
+- `LibereKollabPlugin` is the composition root: the only place that instantiates `LibereKollab` and `McpServer` and wires them together
 - All classes that talk to external systems support constructor injection so tests can pass container coordinates
 
 ### Kotlin style
@@ -62,8 +60,6 @@ src/test/kotlin/
 
 ### I/O and concurrency
 
-- All methods on `IOAPI` that touch the filesystem are `suspend` — wrap blocking calls in `withContext(Dispatchers.IO)`
-- `nextId()` on `IOAPI` is NOT `suspend` — pure UUID generation, no I/O
 - UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `CoreKollab` — never call UNO from multiple coroutines concurrently
 - `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests
 
@@ -72,13 +68,14 @@ src/test/kotlin/
 `CoreKollab` is the abstract base class implementing `KollabAPI`. It holds the `libreOfficeDispatcher` and all UNO logic. Subclasses only need to implement document access:
 
 ```kotlin
+abstract override suspend fun listDocuments(): List<String>
 protected abstract suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
 protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
 ```
 
-**`LibereKollab`** (`adapter/uno/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. In `withDocumentMutating` it calls `XStorable.store()` after the block.
+**`LibereKollab`** (`adapter/libreoffice/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. `listDocuments()` returns their file names. In `withDocumentMutating` it calls `XStorable.store()` after the block.
 
-**`TestKollab`** (`src/test/`, socket-based) — connects to LibreOffice via UNO socket, loads documents from `IOAPI` storage into a workspace directory, uploads mutated documents back. Created via `TestKollab.viaSocket(host, port, storage, containerWorkspacePath)`.
+**`TestKollab`** (`src/test/`, socket-based) — connects to LibreOffice via UNO socket, loads documents from a local `basePath` directory into a container workspace, stores mutated documents back. Created via `TestKollab.viaSocket(host, port, basePath, containerWorkspacePath)`.
 
 ## OXT packaging
 
@@ -109,17 +106,6 @@ LibereKollab.oxt (ZIP)
 - `__create(context)` — JVM static factory required by UNO; stores `instance`
 
 `OptionsHandler` implements `XContainerWindowEventHandler` + `XServiceInfo`. Registered via `OptionsDialog.xcu`. Handles methods `"initialize"` and `"ok"`. Button `btnToggle` starts/stops the server; `btnOpenLog` opens the log file via `java.awt.Desktop.open()` (falls back to opening the directory if the log file doesn't exist yet).
-
-## Workspace / IOAPI
-
-`IOAPI` is implemented by `LocalFileAdapter` — reads and writes files directly to a local directory (`liberekollab.workspace` system property, defaults to `<tmp>/liberekollab`). `LoggingIOAPI` wraps it for structured logging.
-
-`IOAPI.ls()` — lists file names in the workspace.  
-`IOAPI.nextId()` — pure UUID, not `suspend`.  
-`IOAPI.upload(documentId, fileName, stream)` — writes the stream to `workspacePath/fileName`.  
-`IOAPI.download(documentId)` — returns an `InputStream` for the file.
-
-In `TestKollab`: `withDocument` downloads from `IOAPI` to `workspacePath`, loads via UNO `loadComponentFromURL`, runs the block, then deletes the temp file. `withDocumentMutating` additionally calls `XStorable.store()` and uploads back.
 
 ## Edit mode / Track Changes
 
@@ -171,11 +157,11 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 
 ## Logging
 
-`LogDirResolver` extends `PropertyDefinerBase` (logback). Returns:
+`LogDirResolver` (`adapter/logging/`) extends `PropertyDefinerBase` (logback). Returns:
 - Linux/macOS: `~/.config/liberekollab`
 - Windows: `%APPDATA%\liberekollab`
 
-`logback.xml` writes to both console and `${logDir}/liberekollab.log`.
+`logback.xml` writes to both console and `${logDir}/liberekollab.log`. `FeatureRegistry[Tool]` (MCP SDK internal) is suppressed at WARN in both `logback.xml` and `logback-test.xml`.
 
 ## UNO / LibreOffice JAR
 
@@ -193,9 +179,9 @@ Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. T
 ./gradlew test
 ```
 
-`McpServerIT` — starts a real LibreOffice container (Testcontainers, reused via `withReuse(true)`), creates a `TestKollab` via `viaSocket`, and drives the full MCP tool surface over an in-process SSE connection.
+`McpServerIT` — starts a real LibreOffice container (Testcontainers), creates a `TestKollab` via `viaSocket`, and drives the full MCP tool surface over an in-process stdio connection. Test documents are written directly to a shared workspace directory that is bind-mounted into the container.
 
-Container reuse is enabled via `src/test/resources/testcontainers.properties`. The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
+The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
 
 Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` artifact, not the old `junit-5`).
 

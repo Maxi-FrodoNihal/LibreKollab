@@ -1,6 +1,6 @@
 package org.msc.liberekollab.adapter.logging
 
-import org.msc.liberekollab.domain.port.KollabAPI
+import org.msc.liberekollab.domain.KollabAPI
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
 import org.msc.liberekollab.domain.model.Comment
@@ -16,6 +16,12 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
 
     private fun preview(text: String): String =
         if (text.length <= previewLength) text else "${text.take(previewLength)}..."
+
+    override suspend fun listDocuments(): List<String> {
+        val result = delegate.listDocuments()
+        log.info("listDocuments() = $result")
+        return result
+    }
 
     override suspend fun getText(documentId: String, changeStatus: ChangeStatus): MarkedText {
         val result = delegate.getText(documentId, changeStatus)

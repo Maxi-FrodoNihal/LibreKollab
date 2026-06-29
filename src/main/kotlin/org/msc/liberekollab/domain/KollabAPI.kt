@@ -1,4 +1,4 @@
-package org.msc.liberekollab.domain.port
+package org.msc.liberekollab.domain
 
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
@@ -6,7 +6,14 @@ import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.text.MarkedText
 
+/**
+ * Central port of LibereKollab. Exposes LibreOffice document editing as MCP tools over SSE.
+ *
+ * Build: ./gradlew oxt  →  build/oxt/LibereKollab-1.0-SNAPSHOT.oxt
+ */
 interface KollabAPI {
+    suspend fun listDocuments(): List<String>
+
     suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText)
 
     suspend fun getChanges(documentId: String): List<Change>

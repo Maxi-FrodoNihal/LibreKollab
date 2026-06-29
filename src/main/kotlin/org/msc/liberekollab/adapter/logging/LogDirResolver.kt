@@ -1,4 +1,4 @@
-package org.msc.liberekollab
+package org.msc.liberekollab.adapter.logging
 
 import ch.qos.logback.core.PropertyDefinerBase
 

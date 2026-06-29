@@ -1,4 +1,4 @@
-package org.msc.liberekollab.adapter.uno
+package org.msc.liberekollab.adapter.libreoffice
 
 import com.sun.star.awt.FontSlant
 import com.sun.star.beans.XPropertySet
@@ -31,12 +31,13 @@ import org.msc.liberekollab.domain.model.text.properties.ItalicProperty
 import org.msc.liberekollab.domain.model.text.properties.StrikethroughProperty
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
 import org.msc.liberekollab.domain.model.text.properties.UnderlineProperty
-import org.msc.liberekollab.domain.port.KollabAPI
+import org.msc.liberekollab.domain.KollabAPI
 
 abstract class CoreKollab : KollabAPI {
 
     protected val libreOfficeDispatcher = Dispatchers.IO.limitedParallelism(1)
 
+    abstract override suspend fun listDocuments(): List<String>
     protected abstract suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
     protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
 

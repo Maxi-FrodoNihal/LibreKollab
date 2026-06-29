@@ -1,30 +1,22 @@
-package org.msc.liberekollab.adapter.plugin
+package org.msc.liberekollab.adapter.libreoffice.plugin
 
 import com.sun.star.beans.NamedValue
 import com.sun.star.lang.XServiceInfo
 import com.sun.star.task.XJob
 import com.sun.star.uno.XComponentContext
 import io.ktor.server.engine.EmbeddedServer
-import org.msc.liberekollab.adapter.local.LocalFileAdapter
-import org.msc.liberekollab.adapter.logging.LoggingIOAPI
 import org.msc.liberekollab.adapter.logging.LoggingKollabAPI
 import org.msc.liberekollab.adapter.mcp.McpServer
-import org.msc.liberekollab.adapter.uno.LibereKollab
-import java.nio.file.Files
-import java.nio.file.Paths
+import org.msc.liberekollab.adapter.libreoffice.LibereKollab
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LibereKollabPlugin(private val context: XComponentContext) : XJob, XServiceInfo {
 
     override fun execute(arguments: Array<out NamedValue>): Any {
         if (running.compareAndSet(false, true)) {
-            val workspacePath = System.getProperty("liberekollab.workspace",
-                "${System.getProperty("java.io.tmpdir")}/liberekollab")
             val port = System.getProperty("liberekollab.port", "8080").toInt()
-            Files.createDirectories(Paths.get(workspacePath))
-            val storage = LoggingIOAPI(LocalFileAdapter(workspacePath))
             val kollab = LoggingKollabAPI(LibereKollab(context))
-            engine = McpServer(kollab, storage).startSse(port)
+            engine = McpServer(kollab).startSse(port)
         }
         return ""
     }
@@ -35,7 +27,7 @@ class LibereKollabPlugin(private val context: XComponentContext) : XJob, XServic
 
     companion object {
         const val SERVICE_NAME = "org.msc.liberekollab.LibereKollabPlugin"
-        const val IMPLEMENTATION_NAME = "org.msc.liberekollab.adapter.plugin.LibereKollabPlugin"
+        const val IMPLEMENTATION_NAME = "org.msc.liberekollab.adapter.libreoffice.plugin.LibereKollabPlugin"
 
         private val running = AtomicBoolean(false)
         private var engine: EmbeddedServer<*, *>? = null

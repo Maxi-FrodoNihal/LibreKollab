@@ -1,7 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.3.21"
-    kotlin("plugin.serialization") version "2.3.21"
-    application
+    kotlin("jvm") version "2.4.0"
+    kotlin("plugin.serialization") version "2.4.0"
 }
 
 group = "org.msc.liberekollab"
@@ -11,7 +10,7 @@ kotlin {
     jvmToolchain(25)
 }
 
-val ktorVersion = "3.1.3"
+val ktorVersion = "3.5.1"
 val testcontainersVersion = "2.0.5"
 val unoLibPath = "libs/uno"
 
@@ -26,23 +25,15 @@ dependencies {
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-sse:$ktorVersion")
-    implementation("ch.qos.logback:logback-classic:1.5.18")
-    implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
+    implementation("ch.qos.logback:logback-classic:1.5.37")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
     implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
 
     testImplementation(kotlin("test"))
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion")
-    testImplementation("org.assertj:assertj-core:3.27.3")
-}
-
-application {
-    mainClass.set("org.msc.liberekollab.MainKt")
-    applicationDefaultJvmArgs = listOf(
-        "--enable-native-access=ALL-UNNAMED",
-        "--sun-misc-unsafe-memory-access=allow"
-    )
+    testImplementation("org.assertj:assertj-core:3.27.7")
 }
 
 val fatJar by tasks.registering(Jar::class) {
@@ -76,5 +67,4 @@ val oxt by tasks.registering(Zip::class) {
 
 tasks.test {
     useJUnitPlatform()
-    systemProperty("testcontainers.reuse.enable", "true")
 }

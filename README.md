@@ -105,7 +105,6 @@ Settings can be changed in the Options dialog or via Java system properties (`-D
 | Property | Default | Description |
 |----------|---------|-------------|
 | `liberekollab.port` | `8080` | MCP server port |
-| `liberekollab.workspace` | `<tmp>/liberekollab` | Temp directory for file operations |
 
 Logs are written to `~/.config/liberekollab/` (Linux/macOS) or `%APPDATA%\liberekollab\` (Windows).
 
@@ -115,7 +114,7 @@ Logs are written to `~/.config/liberekollab/` (Linux/macOS) or `%APPDATA%\libere
 ./gradlew test
 ```
 
-Integration tests spin up a real LibreOffice container via Testcontainers. The container is reused across runs for faster iteration.
+Integration tests spin up a real LibreOffice container via Testcontainers. Docker image caching keeps subsequent runs fast.
 
 ## Building from source
 

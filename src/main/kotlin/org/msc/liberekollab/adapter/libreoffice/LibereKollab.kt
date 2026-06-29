@@ -1,4 +1,4 @@
-package org.msc.liberekollab.adapter.uno
+package org.msc.liberekollab.adapter.libreoffice
 
 import com.sun.star.container.XEnumerationAccess
 import com.sun.star.frame.XDesktop
@@ -18,6 +18,18 @@ class LibereKollab(private val context: XComponentContext) : CoreKollab() {
             XDesktop::class.java,
             serviceManager.createInstanceWithContext("com.sun.star.frame.Desktop", context)
         )
+    }
+
+    override suspend fun listDocuments(): List<String> = withContext(libreOfficeDispatcher) {
+        val components = UnoRuntime.queryInterface(XEnumerationAccess::class.java, getDesktop().components)
+            .createEnumeration()
+        val result = mutableListOf<String>()
+        while (components.hasMoreElements()) {
+            val doc = UnoRuntime.queryInterface(XTextDocument::class.java, components.nextElement()) ?: continue
+            val url = UnoRuntime.queryInterface(XModel::class.java, doc)?.getURL() ?: continue
+            result.add(url.substringAfterLast('/'))
+        }
+        result
     }
 
     private fun findDocument(documentId: String): XTextDocument {

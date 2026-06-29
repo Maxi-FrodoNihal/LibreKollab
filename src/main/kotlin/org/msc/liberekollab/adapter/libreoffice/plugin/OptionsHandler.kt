@@ -1,4 +1,4 @@
-package org.msc.liberekollab.adapter.plugin
+package org.msc.liberekollab.adapter.libreoffice.plugin
 
 import com.sun.star.awt.ActionEvent
 import com.sun.star.awt.XActionListener
@@ -11,7 +11,7 @@ import com.sun.star.lang.EventObject
 import com.sun.star.lang.XServiceInfo
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
-import org.msc.liberekollab.LogDirResolver
+import org.msc.liberekollab.adapter.logging.LogDirResolver
 import java.awt.Desktop
 import java.io.File
 
@@ -81,7 +81,7 @@ class OptionsHandler(private val context: XComponentContext) :
 
     companion object {
         const val SERVICE_NAME = "org.msc.liberekollab.OptionsHandler"
-        const val IMPLEMENTATION_NAME = "org.msc.liberekollab.adapter.plugin.OptionsHandler"
+        const val IMPLEMENTATION_NAME = "org.msc.liberekollab.adapter.libreoffice.plugin.OptionsHandler"
 
         @JvmStatic
         fun __create(context: XComponentContext): OptionsHandler = OptionsHandler(context)
