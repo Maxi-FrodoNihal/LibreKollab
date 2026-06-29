@@ -1,24 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE dlg:window PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "dialog.dtd">
-<dlg:window xmlns:dlg="http://openoffice.org/2000/dialog"
-            dlg:id="OptionsDialog"
-            dlg:left="0" dlg:top="0" dlg:width="230" dlg:height="115"
-            dlg:closeable="true" dlg:moveable="true">
+<dlg:window xmlns:dlg="http://openoffice.org/2000/dialog" xmlns:script="http://openoffice.org/2000/script"
+    dlg:id="OptionsDialog" dlg:left="0" dlg:top="0" dlg:width="115" dlg:height="108"
+    dlg:closeable="true" dlg:moveable="true">
     <dlg:bulletinboard>
-        <dlg:fixedtext dlg:id="lblStatus"
-            dlg:left="5" dlg:top="8" dlg:width="220" dlg:height="12"
-            dlg:value="Status: -"/>
-        <dlg:fixedtext dlg:id="lblPort"
-            dlg:left="5" dlg:top="30" dlg:width="40" dlg:height="12"
+        <dlg:text dlg:id="lblStatus" dlg:tab-index="0"
+            dlg:left="5" dlg:top="6" dlg:width="105" dlg:height="22"
+            dlg:value="Status:"/>
+        <dlg:text dlg:id="lblPort" dlg:tab-index="1"
+            dlg:left="5" dlg:top="38" dlg:width="35" dlg:height="12"
             dlg:value="Port:"/>
-        <dlg:textfield dlg:id="txtPort"
-            dlg:left="50" dlg:top="28" dlg:width="55" dlg:height="14"
-            dlg:value="8080"/>
-        <dlg:button dlg:id="btnToggle"
-            dlg:left="5" dlg:top="55" dlg:width="80" dlg:height="16"
-            dlg:value="Start Server"/>
-        <dlg:button dlg:id="btnOpenLog"
-            dlg:left="5" dlg:top="85" dlg:width="80" dlg:height="16"
-            dlg:value="Logdatei öffnen"/>
+        <dlg:textfield dlg:id="txtPort" dlg:tab-index="2"
+            dlg:left="45" dlg:top="36" dlg:width="60" dlg:height="14"/>
+        <dlg:button dlg:id="btnToggle" dlg:tab-index="3"
+            dlg:left="5" dlg:top="58" dlg:width="105" dlg:height="16"
+            dlg:value="Start server"/>
+        <dlg:button dlg:id="btnOpenLog" dlg:tab-index="4"
+            dlg:left="5" dlg:top="82" dlg:width="105" dlg:height="16"
+            dlg:value="Open log file"/>
     </dlg:bulletinboard>
 </dlg:window>

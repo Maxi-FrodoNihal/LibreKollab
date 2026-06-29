@@ -194,15 +194,8 @@ For manual plugin testing: build the OXT, install it in a local LibreOffice, ope
 # → build/oxt/LibereKollab-1.0-SNAPSHOT.oxt
 ```
 
-Claude Code MCP config (`~/.config/claude-code/mcp.json`):
+Register the MCP server in Claude Code:
 
-```json
-{
-  "mcpServers": {
-    "liberekollab": {
-      "type": "sse",
-      "url": "http://localhost:8080/sse"
-    }
-  }
-}
+```bash
+claude mcp add --transport sse --scope user liberekollab http://localhost:8080/sse
 ```

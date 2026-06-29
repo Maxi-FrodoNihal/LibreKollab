@@ -39,6 +39,8 @@ dependencies {
 val fatJar by tasks.registering(Jar::class) {
     archiveBaseName.set("liberekollab-all")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude("module-info.class")
+    exclude("META-INF/versions/*/module-info.class")
     from(sourceSets.main.get().output)
     dependsOn(configurations.runtimeClasspath)
     from({
@@ -49,6 +51,7 @@ val fatJar by tasks.registering(Jar::class) {
     manifest {
         attributes["Implementation-Title"] = "LibereKollab"
         attributes["Implementation-Version"] = version
+        attributes["RegistrationClassName"] = "org.msc.liberekollab.adapter.libreoffice.plugin.LibereKollabPlugin"
     }
 }
 

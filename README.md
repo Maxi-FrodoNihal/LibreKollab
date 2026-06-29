@@ -48,18 +48,11 @@ The MCP server starts automatically the next time LibreOffice opens a document.
 
 ### Configure Claude Code
 
-Add the server to your Claude Code MCP config (`~/.config/claude-code/mcp.json` on Linux, `%APPDATA%\claude-code\mcp.json` on Windows):
-
-```json
-{
-  "mcpServers": {
-    "liberekollab": {
-      "type": "sse",
-      "url": "http://localhost:8080/sse"
-    }
-  }
-}
+```bash
+claude mcp add --transport sse --scope user liberekollab http://localhost:8080/sse
 ```
+
+This registers the server globally for all your Claude Code sessions. Alternatively, ask Claude Code directly: *"Add the liberekollab MCP server"* and it will run this command for you.
 
 ## Options dialog
 

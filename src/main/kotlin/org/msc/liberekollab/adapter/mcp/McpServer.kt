@@ -3,6 +3,9 @@ package org.msc.liberekollab.adapter.mcp
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.application.install
+import io.ktor.server.routing.routing
+import io.ktor.server.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
@@ -36,8 +39,11 @@ class McpServer(private val kollab: KollabAPI) {
 
     fun startSse(port: Int): EmbeddedServer<*, *> =
         embeddedServer(Netty, port = port) {
-            mcp {
-                buildServer().also { registerTools(it) }
+            install(SSE)
+            routing {
+                mcp("/sse") {
+                    buildServer().also { registerTools(it) }
+                }
             }
         }.start(wait = false)
 
