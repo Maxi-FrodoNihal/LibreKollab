@@ -116,6 +116,8 @@ Logs are written to `~/.config/liberekollab/liberekollab.log` (Linux/macOS) or `
 
 Integration tests spin up a real LibreOffice container via Testcontainers. Docker image caching keeps subsequent runs fast.
 
+Note: the headless LibreOffice used in tests doesn't always behave identically to a real, GUI-attached LibreOffice instance for tracked-changes edge cases. When in doubt about track-changes behavior, verify against a real instance (build the `.oxt`, install it, connect a real MCP client) rather than trusting the test container alone.
+
 ## Building from source
 
 ```bash

@@ -21,7 +21,6 @@ import kotlinx.io.buffered
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -495,10 +494,12 @@ class McpServerIT {
     }
 
     @Test
-    fun `T19 get_changes returns all inserts when pure insert has mixed formatting`() {
-        // Pure insert (charStart==charEnd) with plain + bold text.
-        // LibreOffice splits the insertion into separate tracked changes per format run;
-        // getChanges must return all of them (the Format redline must not reset accumulation state).
+    fun `T19 get_changes returns single insert when pure insert has mixed formatting`() {
+        // Pure insert (charStart==charEnd) with plain + bold text. editText inserts each formatting
+        // run with its final character properties already set, so LibreOffice never has to reformat
+        // already-inserted text — which is what previously caused it to split the insertion into a
+        // separate "Format" redline (only reproducible against a real, GUI-attached LibreOffice, not
+        // this headless test container) and lose everything after the format boundary in getChanges.
         runBlocking {
             val documentId = upload("test_hallo.odt")
 
@@ -522,9 +523,9 @@ class McpServerIT {
             val changes = Json.decodeFromString(ListSerializer(Change.serializer()), json)
             val insertChanges = changes.filter { it.action == ChangeAction.INSERT }
             assertThat(changes.none { it.action == ChangeAction.DELETE }).isTrue()
-            assertThat(insertChanges.size).isGreaterThanOrEqualTo(2)
-            assertThat(insertChanges.joinToString("") { it.text }).isEqualTo(" Dann: Dunkelheit.")
-            assertThat(insertChanges).allMatch { it.author == "Test Author" }
+            assertThat(insertChanges.size).isEqualTo(1)
+            assertThat(insertChanges.single().text).isEqualTo(" Dann: Dunkelheit.")
+            assertThat(insertChanges.single().author).isEqualTo("Test Author")
         }
     }
 }

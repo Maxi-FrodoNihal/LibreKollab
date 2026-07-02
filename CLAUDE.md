@@ -151,6 +151,8 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 `TextProperty` is a sealed interface. Implementations: `BoldProperty`, `ItalicProperty`, `UnderlineProperty`, `StrikethroughProperty` — each holds a `MarkIndex(paragraphIndex, from, to)`.
 
+`insertFormattedText` (in `CoreKollab`, used by `editText`) inserts `newText` one formatting run at a time, setting the cursor's character properties *before* each `insertString` call — never insert plain text and reformat it afterward. Reformatting already-inserted, not-yet-accepted text makes LibreOffice record the attribute change as its own "Format" redline, splitting one logical insert into two adjacent redlines. `getChanges()` reads redlines by bracket (`IsStart`/`IsEnd`) and resets its accumulator on every redline end, so a Format redline ending between two Insert-redline halves silently drops everything after it. This only reproduces against a real, GUI-attached LibreOffice — see Testing below.
+
 ## Comments (UNO annotations)
 
 `TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (12-char SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"`).
@@ -208,6 +210,8 @@ Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. T
 The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
 
 Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` artifact, not the old `junit-5`).
+
+**Known limitation:** the headless LibreOffice in the Testcontainers image does not always reproduce redline/portion behavior seen in a real, GUI-attached LibreOffice — e.g. the Format-redline-splitting described under Text and formatting only occurs in the latter. Tests here still cover the actual insertion/read logic; they just can't prove a given LibreOffice-internal quirk is gone. Treat a live retest (build the `.oxt`, install, connect a real MCP client) as the authority when in doubt.
 
 ## Local development
 

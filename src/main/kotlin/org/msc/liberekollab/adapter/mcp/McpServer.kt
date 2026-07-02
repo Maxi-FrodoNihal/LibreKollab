@@ -165,7 +165,7 @@ class McpServer(private val kollab: KollabAPI) {
 
         server.addTool(
             name = "edit_text",
-            description = "Replace a text range in a document. Changes are tracked. Anchor only the exact range you want to replace — not the surrounding paragraph. For a pure insertion (no deletion), set anchorCharStart == anchorCharEnd at the insertion point and provide only the new text as newText. The anchor range will be deleted and replaced by newText.",
+            description = "Replace a text range in a document. Changes are tracked. Anchor only the exact range you want to replace — not the surrounding paragraph. anchorCharStart/anchorCharEnd are 0-based character offsets into the paragraph, where the paragraph's length itself denotes the position right after its last character (e.g. a 113-character paragraph ends at position 113, not 112). For a pure insertion (no deletion), set anchorCharStart == anchorCharEnd at the insertion point — use the paragraph's length to insert at its end — and provide only the new text as newText. The anchor range will be deleted and replaced by newText.",
             inputSchema = ToolSchema(
                 properties = buildJsonObject {
                     put("documentId", buildJsonObject { put("type", "string") })

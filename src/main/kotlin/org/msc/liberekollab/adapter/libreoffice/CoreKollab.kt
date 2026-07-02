@@ -4,12 +4,12 @@ import com.sun.star.awt.FontSlant
 import com.sun.star.beans.XPropertySet
 import com.sun.star.container.XEnumerationAccess
 import com.sun.star.frame.XModel
-import com.sun.star.frame.XStorable
-import com.sun.star.lang.XComponent
 import com.sun.star.lang.XMultiServiceFactory
 import com.sun.star.lang.XServiceInfo
+import com.sun.star.text.ControlCharacter
 import com.sun.star.text.XPageCursor
 import com.sun.star.text.XTextContent
+import com.sun.star.text.XTextCursor
 import com.sun.star.text.XTextDocument
 import com.sun.star.text.XTextFieldsSupplier
 import com.sun.star.text.XTextRange
@@ -33,6 +33,7 @@ import org.msc.liberekollab.domain.model.text.properties.StrikethroughProperty
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
 import org.msc.liberekollab.domain.model.text.properties.UnderlineProperty
 import org.msc.liberekollab.domain.KollabAPI
+import kotlin.reflect.KClass
 
 abstract class CoreKollab : KollabAPI {
 
@@ -88,7 +89,8 @@ abstract class CoreKollab : KollabAPI {
                     while (portions.hasMoreElements()) {
                         val portion = portions.nextElement()
                         val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion)
-                        when (propSet.getPropertyValue("TextPortionType") as? String) {
+                        val portionType = propSet.getPropertyValue("TextPortionType") as? String
+                        when (portionType) {
                             "Redline" -> {
                                 val isStart = propSet.getPropertyValue("IsStart") as? Boolean ?: false
                                 if (isStart) {
@@ -108,14 +110,13 @@ abstract class CoreKollab : KollabAPI {
                                         redlineText = StringBuilder()
                                         redlineStart = charOffset
                                     }
-                                    // unknown type (e.g. "Format") — keep current state and keep accumulating
                                 } else {
                                     val text = redlineText.toString()
                                     if (redlineAction != null && redlineDateTime != null && text.isNotEmpty()) {
                                         changes.add(Change(
-                                            action = redlineAction!!,
+                                            action = redlineAction,
                                             author = redlineAuthor,
-                                            dateTime = redlineDateTime!!,
+                                            dateTime = redlineDateTime,
                                             text = text,
                                             anchor = TextAnchor(text, paragraphIdx, redlineStart, redlineStart + text.length)
                                         ))
@@ -141,8 +142,8 @@ abstract class CoreKollab : KollabAPI {
             withContext(libreOfficeDispatcher) {
                 withDocumentMutating(documentId) { textDoc ->
                     withAuthor(author) {
-                        resolveAnchorRange(textDoc, anchor).setString(newText.text)
-                        applyFormatting(textDoc, anchor, newText)
+                        resolveAnchorRange(textDoc, anchor).setString("")
+                        insertFormattedText(textDoc, anchor, newText)
                     }
                 }
             }
@@ -464,57 +465,57 @@ abstract class CoreKollab : KollabAPI {
         if (charStrikeout != null && charStrikeout != 0) properties.add(StrikethroughProperty(idx))
     }
 
-    private fun applyFormatting(textDoc: XTextDocument, anchor: TextAnchor, markedText: MarkedText) {
-        val insertLines = markedText.text.split('\n')
-        val paraCount = insertLines.size
-        val paraMap = mutableMapOf<Int, Any>()
-        val allParagraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+    // Inserts newText.text one formatting run at a time, setting the cursor's character properties
+    // *before* each insertString call. This avoids ever reformatting already-inserted text: LibreOffice
+    // tracks such a later attribute change as its own "Format" redline, which splits what should be one
+    // logical Insert into two — losing the second half when getChanges() reads the portions back.
+    private fun insertFormattedText(textDoc: XTextDocument, anchor: TextAnchor, markedText: MarkedText) {
+        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
         var idx = 0
-        while (allParagraphs.hasMoreElements()) {
-            val para = allParagraphs.nextElement()
-            val absIdx = idx++
-            if (absIdx in anchor.paragraphIndex until anchor.paragraphIndex + paraCount) paraMap[absIdx] = para
+        var anchorPara: Any? = null
+        while (paragraphs.hasMoreElements()) {
+            val para = paragraphs.nextElement()
+            if (idx == anchor.paragraphIndex) { anchorPara = para; break }
+            idx++
         }
-        // Reset formatting only on the newly inserted text.
-        // In paragraph 0, the DELETE redline sits at [anchor.charStart..anchor.charEnd) — skip it first.
-        // Subsequent new paragraphs start clean so their full range can be reset directly.
-        val firstPara = paraMap[anchor.paragraphIndex]
-        if (firstPara != null) {
-            val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, firstPara).start
-            val resetCursor = textDoc.text.createTextCursorByRange(paraStart)
-            resetCursor.goRight(anchor.charEnd.toShort(), false)
-            resetCursor.goRight(insertLines[0].length.toShort(), true)
-            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, resetCursor)
-            propSet.setPropertyValue("CharWeight", 100f)
-            propSet.setPropertyValue("CharPosture", FontSlant.NONE)
-            propSet.setPropertyValue("CharUnderline", 0.toShort())
-            propSet.setPropertyValue("CharStrikeout", 0.toShort())
-        }
-        for (paraIdx in anchor.paragraphIndex + 1 until anchor.paragraphIndex + paraCount) {
-            val para = paraMap[paraIdx] ?: continue
-            val range = UnoRuntime.queryInterface(XTextRange::class.java, para)
-            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, textDoc.text.createTextCursorByRange(range))
-            propSet.setPropertyValue("CharWeight", 100f)
-            propSet.setPropertyValue("CharPosture", FontSlant.NONE)
-            propSet.setPropertyValue("CharUnderline", 0.toShort())
-            propSet.setPropertyValue("CharStrikeout", 0.toShort())
-        }
-        for (property in markedText.properties) {
-            val docParaIdx = anchor.paragraphIndex + property.markIndex.paragraphIndex
-            val para = paraMap[docParaIdx] ?: continue
-            val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, para).start
-            val cursor = textDoc.text.createTextCursorByRange(paraStart)
-            // For the anchor paragraph, skip past the DELETE redline before applying offsets.
-            if (property.markIndex.paragraphIndex == 0) cursor.goRight(anchor.charEnd.toShort(), false)
-            cursor.goRight(property.markIndex.from.toShort(), false)
-            cursor.goRight((property.markIndex.to - property.markIndex.from).toShort(), true)
-            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, cursor)
-            when (property) {
-                is BoldProperty -> propSet.setPropertyValue("CharWeight", 150f)
-                is ItalicProperty -> propSet.setPropertyValue("CharPosture", FontSlant.ITALIC)
-                is UnderlineProperty -> propSet.setPropertyValue("CharUnderline", 1.toShort())
-                is StrikethroughProperty -> propSet.setPropertyValue("CharStrikeout", 1.toShort())
+        requireNotNull(anchorPara) { "Paragraph index ${anchor.paragraphIndex} not found in document" }
+
+        val cursor = textDoc.text.createTextCursorByRange(UnoRuntime.queryInterface(XTextRange::class.java, anchorPara).start)
+        cursor.goRight(anchor.charEnd.toShort(), false)
+
+        markedText.text.split('\n').forEachIndexed { lineIdx, line ->
+            if (lineIdx > 0) {
+                textDoc.text.insertControlCharacter(cursor, ControlCharacter.PARAGRAPH_BREAK, false)
+                cursor.collapseToEnd()
+            }
+            formattingRuns(line, lineIdx, markedText.properties).forEach { run ->
+                applyRunProperties(cursor, run.properties)
+                textDoc.text.insertString(cursor, run.text, false)
+                cursor.collapseToEnd()
             }
         }
+    }
+
+    private fun applyRunProperties(cursor: XTextCursor, properties: Set<KClass<out TextProperty>>) {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, cursor)
+        propSet.setPropertyValue("CharWeight", if (BoldProperty::class in properties) 150f else 100f)
+        propSet.setPropertyValue("CharPosture", if (ItalicProperty::class in properties) FontSlant.ITALIC else FontSlant.NONE)
+        propSet.setPropertyValue("CharUnderline", (if (UnderlineProperty::class in properties) 1 else 0).toShort())
+        propSet.setPropertyValue("CharStrikeout", (if (StrikethroughProperty::class in properties) 1 else 0).toShort())
+    }
+
+    private data class FormattingRun(val text: String, val properties: Set<KClass<out TextProperty>>)
+
+    private fun formattingRuns(line: String, lineIdx: Int, properties: List<TextProperty>): List<FormattingRun> {
+        if (line.isEmpty()) return emptyList()
+        val lineProperties = properties.filter { it.markIndex.paragraphIndex == lineIdx }
+        val cuts = (lineProperties.flatMap { listOf(it.markIndex.from, it.markIndex.to) } + listOf(0, line.length))
+            .toSortedSet().toList()
+        return cuts.zipWithNext { start, end ->
+            FormattingRun(
+                text = line.substring(start, end),
+                properties = lineProperties.filter { start >= it.markIndex.from && end <= it.markIndex.to }.map { it::class }.toSet()
+            )
+        }.filter { it.text.isNotEmpty() }
     }
 }
