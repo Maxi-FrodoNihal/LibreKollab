@@ -1,1 +1,1 @@
-rootProject.name = "LibereKollab"
+rootProject.name = "LibreKollab"

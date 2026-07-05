@@ -1,2 +1,2 @@
-LibereKollab exposes LibreOffice document editing via the Model Context Protocol (MCP),
+LibreKollab exposes LibreOffice document editing via the Model Context Protocol (MCP),
 allowing AI agents to read, navigate and edit documents directly.

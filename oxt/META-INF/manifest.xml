@@ -2,7 +2,7 @@
 <manifest:manifest xmlns:manifest="http://openoffice.org/2001/manifest">
     <manifest:file-entry
         manifest:media-type="application/vnd.sun.star.uno-components"
-        manifest:full-path="LibereKollab.components"/>
+        manifest:full-path="LibreKollab.components"/>
     <manifest:file-entry
         manifest:media-type="application/vnd.sun.star.configuration-data"
         manifest:full-path="Jobs.xcu"/>

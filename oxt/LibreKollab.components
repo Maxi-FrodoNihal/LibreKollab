@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<components xmlns="http://openoffice.org/2010/uno-components">
+    <component loader="com.sun.star.loader.Java2" uri="librekollab-all.jar">
+        <implementation name="org.msc.librekollab.adapter.libreoffice.plugin.LibreKollabPlugin">
+            <service name="org.msc.librekollab.LibreKollabPlugin"/>
+        </implementation>
+        <implementation name="org.msc.librekollab.adapter.libreoffice.plugin.OptionsHandler">
+            <service name="org.msc.librekollab.OptionsHandler"/>
+        </implementation>
+    </component>
+</components>

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <description xmlns="http://openoffice.org/extensions/description/2006">
-    <identifier value="org.msc.liberekollab"/>
+    <identifier value="org.msc.librekollab"/>
     <version value="1.0"/>
     <display-name>
-        <name lang="en">LibereKollab</name>
-        <name lang="de">LibereKollab</name>
+        <name lang="en">LibreKollab</name>
+        <name lang="de">LibreKollab</name>
     </display-name>
     <extension-description>
         <src lang="en" xlink:href="description-en.txt"

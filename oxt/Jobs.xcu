@@ -3,9 +3,9 @@
                     xmlns:xs="http://www.w3.org/2001/XMLSchema"
                     oor:name="Jobs" oor:package="org.openoffice.Office">
     <node oor:name="Jobs">
-        <node oor:name="LibereKollabStartup" oor:op="replace">
+        <node oor:name="LibreKollabStartup" oor:op="replace">
             <prop oor:name="Service">
-                <value>org.msc.liberekollab.LibereKollabPlugin</value>
+                <value>org.msc.librekollab.LibreKollabPlugin</value>
             </prop>
             <node oor:name="Arguments"/>
         </node>
@@ -13,7 +13,7 @@
     <node oor:name="Events">
         <node oor:name="onFirstVisibleTask" oor:op="fuse">
             <node oor:name="JobList">
-                <node oor:name="LibereKollabStartup" oor:op="replace"/>
+                <node oor:name="LibreKollabStartup" oor:op="replace"/>
             </node>
         </node>
     </node>

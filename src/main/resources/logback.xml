@@ -1,5 +1,5 @@
 <configuration>
-    <define name="logDir" class="org.msc.liberekollab.adapter.logging.LogDirResolver"/>
+    <define name="logDir" class="org.msc.librekollab.adapter.logging.LogDirResolver"/>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{dd.MM.yyyy HH:mm:ss.SSS} %highlight(%-5level) %cyan(%logger{36}) - %msg%n</pattern>
@@ -7,9 +7,9 @@
     </appender>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${logDir}/liberekollab.log</file>
+        <file>${logDir}/librekollab.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${logDir}/liberekollab.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <fileNamePattern>${logDir}/librekollab.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>10MB</maxFileSize>
             <maxHistory>7</maxHistory>
         </rollingPolicy>

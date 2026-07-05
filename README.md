@@ -1,10 +1,10 @@
-# LibereKollab
+# LibreKollab
 
 A LibreOffice extension (.oxt) that exposes document editing as [MCP](https://modelcontextprotocol.io/) tools. Install it once and Claude Code can read, edit, and annotate any document you have open in LibreOffice — tracked changes, comments, chapters, pages, and more.
 
 ## What it does
 
-LibereKollab bridges LibreOffice and AI agents. The extension embeds an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
+LibreKollab bridges LibreOffice and AI agents. The extension embeds an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
 
 - **Read** full text, specific pages, or individual chapters
 - **Edit** text ranges — all edits are recorded as LibreOffice tracked changes for human review
@@ -19,7 +19,7 @@ Humans retain full control: accept or reject tracked changes directly in LibreOf
 ```
 Claude Code CLI
       │  MCP (SSE, localhost:8080)
-LibereKollab OXT extension
+LibreKollab OXT extension
       │  in-process UNO
 LibreOffice document(s)
 ```
@@ -31,7 +31,7 @@ The extension runs inside LibreOffice's JVM — no external server, no Docker, n
 ### Prerequisites
 
 - LibreOffice 7.x or newer
-- Java 17+ (bundled with most LibreOffice installations)
+- Java 25+ — LibreOffice must be configured to use a Java 25 (or newer) runtime under `Extras > Optionen > LibreOffice > Erweitert` (`Tools > Options > LibreOffice > Advanced` on English installs). An older configured runtime (e.g. Java 21, which some installs default to) makes the extension's JAR fail to load silently: the Options page entry still shows up in the tree, but the page itself renders blank because the `OptionsHandler` can't be instantiated.
 
 ### Build the extension
 
@@ -39,7 +39,7 @@ The extension runs inside LibreOffice's JVM — no external server, no Docker, n
 ./gradlew oxt
 ```
 
-The extension is written to `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
+The extension is written to `build/oxt/LibreKollab-1.0-SNAPSHOT.oxt`.
 
 ### Install in LibreOffice
 
@@ -49,26 +49,26 @@ The extension is written to `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
 
 The server does **not** start automatically. Open the settings page and click **Start server**:
 
-`Extras > Optionen > Internet > LibereKollab MCP Server`
+`Extras > Optionen > Internet > LibreKollab MCP Server`
 
 ### Connect Claude Code
 
 ```bash
-claude mcp add --transport sse --scope user liberekollab http://localhost:8080/sse
+claude mcp add --transport sse --scope user librekollab http://localhost:8080/sse
 ```
 
 This registers the server globally for all your Claude Code sessions.
 
 ## Settings
 
-`Extras > Optionen > Internet > LibereKollab MCP Server`
+`Extras > Optionen > Internet > LibreKollab MCP Server`
 
 | Control | Description |
 |---------|-------------|
 | Status | Shows whether the server is running and on which port |
 | Port | Port the MCP server listens on (default: 8080) |
 | Start / Stop server | Toggles the server; port change takes effect on next start |
-| Open log file | Opens `~/.config/liberekollab/liberekollab.log` |
+| Open log file | Opens `~/.config/librekollab/librekollab.log` |
 
 ## Available tools
 
@@ -107,9 +107,9 @@ Text-reading tools accept an optional `changeStatus` parameter:
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `liberekollab.port` | `8080` | MCP server port |
+| `librekollab.port` | `8080` | MCP server port |
 
-Logs are written to `~/.config/liberekollab/liberekollab.log` (Linux/macOS) or `%APPDATA%\liberekollab\liberekollab.log` (Windows).
+Logs are written to `~/.config/librekollab/librekollab.log` (Linux/macOS) or `%APPDATA%\librekollab\librekollab.log` (Windows).
 
 ## Running tests
 

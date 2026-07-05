@@ -1,4 +1,4 @@
-# LibereKollab
+# LibreKollab
 
 Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, manage comments, and read embedded images — all via in-process UNO.
 
@@ -7,19 +7,19 @@ Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. 
 ```
 Claude Code CLI
       │  MCP (SSE, localhost:8080)
-LibereKollab OXT extension
+LibreKollab OXT extension
       │  in-process UNO (no socket in production)
 LibreOffice document(s)
 ```
 
 The extension implements `XJob` and is registered via `Jobs.xcu` to run on `onFirstVisibleTask`. `execute()` is a no-op — it only logs that the plugin is ready. The MCP server is **not** started automatically; the user starts it manually from the Options dialog (`Extras > Optionen > Internet > MCP Server`). `McpServer.startSse()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later. An `AtomicBoolean` guard prevents double-start.
 
-`documentId` is the file name of a currently open document in LibreOffice (e.g. `report.odt`). `LibereKollab` resolves it by enumerating `XDesktop.getComponents()`.
+`documentId` is the file name of a currently open document in LibreOffice (e.g. `report.odt`). `LibreKollab` resolves it by enumerating `XDesktop.getComponents()`.
 
 ## Package structure
 
 ```
-org.msc.liberekollab
+org.msc.librekollab
 ├── domain/
 │   ├── KollabAPI.kt    # central port — see KDoc for build instructions
 │   └── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
@@ -29,8 +29,8 @@ org.msc.liberekollab
 │           └── properties/
 └── adapter/
     ├── mcp/            # McpServer
-    ├── libreoffice/    # CoreKollab (abstract), LibereKollab (in-process, production)
-    │   └── plugin/     # LibereKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
+    ├── libreoffice/    # CoreKollab (abstract), LibreKollab (in-process, production)
+    │   └── plugin/     # LibreKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
     └── logging/        # LoggingKollabAPI, LogDirResolver
 ```
 
@@ -38,7 +38,7 @@ Test sources:
 
 ```
 src/test/kotlin/
-└── org/msc/liberekollab/
+└── org/msc/librekollab/
     ├── adapter/libreoffice/TestKollab.kt   # Socket-based KollabAPI for tests
     └── McpServerIT.kt
 ```
@@ -49,7 +49,7 @@ src/test/kotlin/
 
 - `domain/` has zero imports from `adapter/` — domain model and ports are framework-agnostic
 - Adapters import from `domain/` and `domain/model/` only — never from other adapters
-- `LibereKollabPlugin` is the composition root: the only place that instantiates `LibereKollab` and `McpServer` and wires them together
+- `LibreKollabPlugin` is the composition root: the only place that instantiates `LibreKollab` and `McpServer` and wires them together
 - All classes that talk to external systems support constructor injection so tests can pass container coordinates
 
 ### Kotlin style
@@ -64,7 +64,7 @@ src/test/kotlin/
 - UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `CoreKollab` — never call UNO from multiple coroutines concurrently
 - `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests
 
-## CoreKollab / LibereKollab / TestKollab
+## CoreKollab / LibreKollab / TestKollab
 
 `CoreKollab` is the abstract base class implementing `KollabAPI`. It holds the `libreOfficeDispatcher` and all UNO logic. Subclasses only need to implement document access:
 
@@ -74,38 +74,38 @@ protected abstract suspend fun <T> withDocument(documentId: String, block: (XTex
 protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
 ```
 
-**`LibereKollab`** (`adapter/libreoffice/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. `listDocuments()` returns their file names. In `withDocumentMutating` it calls `XStorable.store()` after the block.
+**`LibreKollab`** (`adapter/libreoffice/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. `listDocuments()` returns their file names. In `withDocumentMutating` it calls `XStorable.store()` after the block.
 
 **`TestKollab`** (`src/test/`, socket-based) — connects to LibreOffice via UNO socket, loads documents from a local `basePath` directory into a container workspace, stores mutated documents back. Created via `TestKollab.viaSocket(host, port, basePath, containerWorkspacePath)`.
 
 ## OXT packaging
 
-The extension is built by `./gradlew oxt` → `build/oxt/LibereKollab-1.0-SNAPSHOT.oxt`.
+The extension is built by `./gradlew oxt` → `build/oxt/LibreKollab-1.0-SNAPSHOT.oxt`.
 
 ```
-LibereKollab.oxt (ZIP)
-├── liberekollab-all.jar      # fat JAR (excludes libreoffice.jar)
-├── LibereKollab.components   # UNO service registration (plugin + options handler)
+LibreKollab.oxt (ZIP)
+├── librekollab-all.jar      # fat JAR (excludes libreoffice.jar)
+├── LibreKollab.components   # UNO service registration (plugin + options handler)
 ├── Jobs.xcu                  # registers XJob trigger on onFirstVisibleTask
 ├── OptionsDialog.xcu         # registers Extras > Optionen > Internet > MCP Server leaf
 ├── dialogs/OptionsDialog.xdl # dialog layout (dlg:text labels, script:event buttons)
-├── description.xml           # extension identifier org.msc.liberekollab
+├── description.xml           # extension identifier org.msc.librekollab
 ├── description-en.txt
-└── META-INF/manifest.xml     # lists: LibereKollab.components, Jobs.xcu, OptionsDialog.xcu
+└── META-INF/manifest.xml     # lists: LibreKollab.components, Jobs.xcu, OptionsDialog.xcu
 ```
 
 `libreoffice.jar` is `compileOnly` + `testImplementation` — present for compilation and tests, excluded from the fat JAR to avoid bundling what LibreOffice already provides.
 
 ## Plugin lifecycle
 
-`LibereKollabPlugin` implements `XJob` + `XServiceInfo`. LibreOffice calls `execute()` on first visible task — the method just logs "plugin ready" and returns.
+`LibreKollabPlugin` implements `XJob` + `XServiceInfo`. LibreOffice calls `execute()` on first visible task — the method just logs "plugin ready" and returns.
 
 - `running: AtomicBoolean` — `compareAndSet(false, true)` in `start()` prevents double-start
 - `engine: EmbeddedServer<*, *>?` — holds the running Ktor server
-- `instance: LibereKollabPlugin?` — stored in `init { instance = this }` so `OptionsHandler` can call `start()` / `close()`
-- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads `liberekollab.port` system property (default `8080`), creates `LibereKollab` + `McpServer`, calls `startSse(port)`
+- `instance: LibreKollabPlugin?` — stored in `init { instance = this }` so `OptionsHandler` can call `start()` / `close()`
+- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads `librekollab.port` system property (default `8080`), creates `LibreKollab` + `McpServer`, calls `startSse(port)`
 - `close()` — stops the engine, sets `engine = null`, resets `running` to `false`
-- `__getComponentFactory(implementationName)` — JVM static factory required by UNO; dispatches both `LibereKollabPlugin` and `OptionsHandler` by implementation name
+- `__getComponentFactory(implementationName)` — JVM static factory required by UNO; dispatches both `LibreKollabPlugin` and `OptionsHandler` by implementation name
 
 `OptionsHandler` implements `WeakBase() + XContainerWindowEventHandler + XServiceInfo`. Registered via `OptionsDialog.xcu`. `WeakBase` provides `XTypeProvider`/`XInterface` required for UNO marshalling.
 
@@ -198,10 +198,10 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 ## Logging
 
 `LogDirResolver` (`adapter/logging/`) extends `PropertyDefinerBase` (logback). Returns:
-- Linux/macOS: `~/.config/liberekollab`
-- Windows: `%APPDATA%\liberekollab`
+- Linux/macOS: `~/.config/librekollab`
+- Windows: `%APPDATA%\librekollab`
 
-`logback.xml` writes to both console and `${logDir}/liberekollab.log`. `FeatureRegistry[Tool]` (MCP SDK internal) is suppressed at WARN in both `logback.xml` and `logback-test.xml`.
+`logback.xml` writes to both console and `${logDir}/librekollab.log`. `FeatureRegistry[Tool]` (MCP SDK internal) is suppressed at WARN in both `logback.xml` and `logback-test.xml`.
 
 ## UNO / LibreOffice JAR
 
@@ -221,7 +221,7 @@ Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. T
 
 `McpServerIT` — starts a real LibreOffice container (Testcontainers), creates a `TestKollab` via `viaSocket`, and drives the full MCP tool surface over an in-process stdio connection. Test documents are written directly to a shared workspace directory that is bind-mounted into the container.
 
-The LibreOffice container uses a fixed image name (`liberekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
+The LibreOffice container uses a fixed image name (`librekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
 
 Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` artifact, not the old `junit-5`).
 
@@ -231,9 +231,11 @@ Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` 
 
 For manual plugin testing: build the OXT, install it in a local LibreOffice, start the server from the Options dialog, open a document, and connect Claude Code.
 
+**Java requirement:** the project builds with `jvmToolchain(25)` (see `build.gradle.kts`), so LibreOffice's *configured* Java runtime (`Extras > Optionen > LibreOffice > Erweitert` / `Tools > Options > LibreOffice > Advanced`) must be Java 25 or newer. If it's set to an older runtime (Windows installs default to whatever JRE is detected, e.g. Java 21), the extension JAR fails to load entirely — silently. Symptom: the Options page entry still appears in the tree, but the page itself renders blank, because `OptionsHandler` can never be instantiated. `%APPDATA%\librekollab\librekollab.log` (or `~/.config/librekollab/librekollab.log`) never gets created in this case — its absence is the tell that the JAR never loaded, as opposed to an XDL/dialog bug.
+
 ```bash
 ./gradlew oxt
-# → build/oxt/LibereKollab-1.0-SNAPSHOT.oxt
+# → build/oxt/LibreKollab-1.0-SNAPSHOT.oxt
 ```
 
 Install via `Extras > Extension Manager > Add...`, restart LibreOffice, then open the Options dialog (`Extras > Optionen > Internet > MCP Server`) and click **Start server**.
@@ -241,5 +243,5 @@ Install via `Extras > Extension Manager > Add...`, restart LibreOffice, then ope
 Register the MCP server in Claude Code:
 
 ```bash
-claude mcp add --transport sse --scope user liberekollab http://localhost:8080/sse
+claude mcp add --transport sse --scope user librekollab http://localhost:8080/sse
 ```
