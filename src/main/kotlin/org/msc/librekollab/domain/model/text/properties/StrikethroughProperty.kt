@@ -6,4 +6,4 @@ import org.msc.librekollab.domain.model.text.MarkIndex
 
 @Serializable
 @SerialName("strikethrough")
-data class StrikethroughProperty(override val markIndex: MarkIndex) : TextProperty()
+data class StrikethroughProperty(override val markIndex: MarkIndex) : TextProperty

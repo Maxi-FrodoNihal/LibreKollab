@@ -289,7 +289,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
                     dt.Year.toInt(), dt.Month.toInt(), dt.Day.toInt(),
                     dt.Hours.toInt(), dt.Minutes.toInt(), dt.Seconds.toInt()
                 )
-                comments.add(Comment.of(anchor, author, content, dateTime))
+                comments.add(Comment(anchor, author, content, dateTime))
             }
             comments.sortedWith(compareBy({ it.anchor.paragraphIndex }, { it.anchor.charStart }))
         }

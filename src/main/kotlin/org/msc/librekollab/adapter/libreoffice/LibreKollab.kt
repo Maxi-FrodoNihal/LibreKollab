@@ -13,6 +13,7 @@ import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
 import com.sun.star.util.XChangesBatch
 import kotlinx.coroutines.withContext
+import org.msc.librekollab.domain.KollabAPI
 
 class LibreKollab(context: XComponentContext) : CoreKollab(context) {
 
@@ -52,7 +53,7 @@ class LibreKollab(context: XComponentContext) : CoreKollab(context) {
         withContext(libreOfficeDispatcher) { block(findDocument(documentId)) }
 
     override fun withAuthor(author: String, block: () -> Unit) {
-        if (author.isEmpty()) { block(); return }
+        if (author == KollabAPI.UNKNOWN_AUTHOR) { block(); return }
         val configProvider = UnoRuntime.queryInterface(
             XMultiServiceFactory::class.java,
             componentContext.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", componentContext)

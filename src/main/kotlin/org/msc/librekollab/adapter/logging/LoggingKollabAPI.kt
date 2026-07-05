@@ -12,12 +12,11 @@ import org.slf4j.LoggerFactory
 
 class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
 
-    private val previewLength: Int = 20
-
     private val log = LoggerFactory.getLogger(LoggingKollabAPI::class.java)
 
-    private fun preview(text: String): String =
-        if (text.length <= previewLength) text else "${text.take(previewLength)}..."
+    companion object {
+        private const val PREVIEW_LENGTH = 20
+    }
 
     override suspend fun listDocuments(): List<String> {
         val result = delegate.listDocuments()
@@ -111,7 +110,20 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
 
     override suspend fun getImage(documentId: String, imageId: String): Image? {
         val result = delegate.getImage(documentId, imageId)
-        log.info("getImage(documentId=$documentId, imageId=$imageId) = ${if (result != null) "found" else "not found"}")
+        val foundStatus: String
+        if (result != null) {
+            foundStatus = "found"
+        } else {
+            foundStatus = "not found"
+        }
+        log.info("getImage(documentId=$documentId, imageId=$imageId) = $foundStatus")
         return result
+    }
+
+    private fun preview(text: String): String {
+        if (text.length <= PREVIEW_LENGTH) {
+            return text
+        }
+        return "${text.take(PREVIEW_LENGTH)}..."
     }
 }

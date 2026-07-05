@@ -6,4 +6,4 @@ import org.msc.librekollab.domain.model.text.MarkIndex
 
 @Serializable
 @SerialName("italic")
-data class ItalicProperty(override val markIndex: MarkIndex) : TextProperty()
+data class ItalicProperty(override val markIndex: MarkIndex) : TextProperty

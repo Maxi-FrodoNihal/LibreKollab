@@ -35,16 +35,12 @@ import org.msc.librekollab.domain.model.TextAnchor
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.change.ChangeStatus
 import org.msc.librekollab.domain.model.image.ImageMeta
+import org.msc.librekollab.domain.model.image.ImageScaler
 import org.msc.librekollab.domain.model.text.MarkedText
 import org.msc.librekollab.domain.model.text.properties.TextProperty
-import java.awt.RenderingHints
-import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.util.Base64
-import javax.imageio.ImageIO
 
-class McpServer(private val kollab: KollabAPI) {
+class McpServer(private val kollab: KollabAPI, private val imageScaler: ImageScaler = ImageScaler()) {
 
     fun startSse(port: Int): EmbeddedServer<*, *> =
         embeddedServer(Netty, port = port) {
@@ -291,146 +287,150 @@ class McpServer(private val kollab: KollabAPI) {
     }
 
     private suspend fun getText(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         val changeStatus = args["changeStatus"]?.jsonPrimitive?.content
             ?.let { ChangeStatus.valueOf(it) } ?: ChangeStatus.FUSION
         return CallToolResult(content = listOf(TextContent(Json.encodeToString(MarkedText.serializer(), kollab.getText(documentId, changeStatus)))))
     }
 
     private suspend fun getPageCount(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(kollab.getPageCount(documentId).toString())))
     }
 
     private suspend fun getChapters(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(kollab.getChapters(documentId).joinToString("\n"))))
     }
 
     private suspend fun getTextByPages(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val fromPage = args["fromPage"]!!.jsonPrimitive.int
-        val toPage = args["toPage"]!!.jsonPrimitive.int
+        val documentId = requiredString(args, "documentId")
+        val fromPage = requiredInt(args, "fromPage")
+        val toPage = requiredInt(args, "toPage")
         val changeStatus = args["changeStatus"]?.jsonPrimitive?.content
             ?.let { ChangeStatus.valueOf(it) } ?: ChangeStatus.FUSION
         return CallToolResult(content = listOf(TextContent(Json.encodeToString(MarkedText.serializer(), kollab.getTextByPages(documentId, fromPage, toPage, changeStatus)))))
     }
 
     private suspend fun getTextByChapter(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val chapter = args["chapter"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
+        val chapter = requiredString(args, "chapter")
         val changeStatus = args["changeStatus"]?.jsonPrimitive?.content
             ?.let { ChangeStatus.valueOf(it) } ?: ChangeStatus.FUSION
         return CallToolResult(content = listOf(TextContent(Json.encodeToString(MarkedText.serializer(), kollab.getTextByChapter(documentId, chapter, changeStatus)))))
     }
 
     private suspend fun getChanges(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(
             Json.encodeToString(ListSerializer(Change.serializer()), kollab.getChanges(documentId))
         )))
     }
 
     private suspend fun getEditMode(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(kollab.getEditMode(documentId).toString())))
     }
 
     private suspend fun editText(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         val anchor = TextAnchor(
-            text = args["anchorText"]!!.jsonPrimitive.content,
-            paragraphIndex = args["anchorParagraphIndex"]!!.jsonPrimitive.int,
-            charStart = args["anchorCharStart"]!!.jsonPrimitive.int,
-            charEnd = args["anchorCharEnd"]!!.jsonPrimitive.int
+            text = requiredString(args, "anchorText"),
+            paragraphIndex = requiredInt(args, "anchorParagraphIndex"),
+            charStart = requiredInt(args, "anchorCharStart"),
+            charEnd = requiredInt(args, "anchorCharEnd")
         )
         val properties: List<TextProperty> = args["newTextProperties"]
             ?.let { Json.decodeFromString(ListSerializer(TextProperty.serializer()), it.toString()) }
             ?: emptyList()
-        val author = args["author"]?.jsonPrimitive?.content ?: ""
-        kollab.editText(documentId, anchor, MarkedText(args["newText"]!!.jsonPrimitive.content, properties), author)
+        val author = args["author"]?.jsonPrimitive?.content ?: KollabAPI.UNKNOWN_AUTHOR
+        kollab.editText(documentId, anchor, MarkedText(requiredString(args, "newText"), properties), author)
         return CallToolResult(content = listOf(TextContent("ok")))
     }
 
     private suspend fun getComments(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(
             Json.encodeToString(ListSerializer(Comment.serializer()), kollab.getComments(documentId))
         )))
     }
 
     private suspend fun getComment(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val commentId = args["commentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
+        val commentId = requiredString(args, "commentId")
         val comment = kollab.getComment(documentId, commentId)
-        return CallToolResult(content = listOf(TextContent(
-            if (comment != null) Json.encodeToString(Comment.serializer(), comment) else "not found"
-        )))
+        val commentJson: String
+        if (comment != null) {
+            commentJson = Json.encodeToString(Comment.serializer(), comment)
+        } else {
+            commentJson = "not found"
+        }
+        return CallToolResult(content = listOf(TextContent(commentJson)))
     }
 
     private suspend fun addComment(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         val anchor = TextAnchor(
-            text = args["anchorText"]!!.jsonPrimitive.content,
-            paragraphIndex = args["anchorParagraphIndex"]!!.jsonPrimitive.int,
-            charStart = args["anchorCharStart"]!!.jsonPrimitive.int,
-            charEnd = args["anchorCharEnd"]!!.jsonPrimitive.int
+            text = requiredString(args, "anchorText"),
+            paragraphIndex = requiredInt(args, "anchorParagraphIndex"),
+            charStart = requiredInt(args, "anchorCharStart"),
+            charEnd = requiredInt(args, "anchorCharEnd")
         )
         kollab.addComment(
             documentId = documentId,
-            commentText = args["commentText"]!!.jsonPrimitive.content,
-            author = args["author"]!!.jsonPrimitive.content,
+            commentText = requiredString(args, "commentText"),
+            author = requiredString(args, "author"),
             anchor = anchor
         )
         return CallToolResult(content = listOf(TextContent("ok")))
     }
 
     private suspend fun updateComment(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val commentId = args["commentId"]!!.jsonPrimitive.content
-        kollab.updateComment(documentId, commentId, args["newText"]!!.jsonPrimitive.content)
+        val documentId = requiredString(args, "documentId")
+        val commentId = requiredString(args, "commentId")
+        kollab.updateComment(documentId, commentId, requiredString(args, "newText"))
         return CallToolResult(content = listOf(TextContent("ok")))
     }
 
     private suspend fun deleteComment(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val commentId = args["commentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
+        val commentId = requiredString(args, "commentId")
         kollab.deleteComment(documentId, commentId)
         return CallToolResult(content = listOf(TextContent("ok")))
     }
 
     private suspend fun getImageMetas(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
         return CallToolResult(content = listOf(TextContent(
             Json.encodeToString(ListSerializer(ImageMeta.serializer()), kollab.getImageMetas(documentId))
         )))
     }
 
     private suspend fun getImage(args: JsonObject): CallToolResult {
-        val documentId = args["documentId"]!!.jsonPrimitive.content
-        val imageId = args["imageId"]!!.jsonPrimitive.content
+        val documentId = requiredString(args, "documentId")
+        val imageId = requiredString(args, "imageId")
         val scale = args["scale"]?.jsonPrimitive?.doubleOrNull
-        val image = kollab.getImage(documentId, imageId)
+        val bytes = prepareImage(documentId, imageId, scale)
             ?: return CallToolResult(content = listOf(TextContent("not found")))
-        val bytes = if (scale != null) scalePng(image.bytes, scale) else image.bytes
         return CallToolResult(content = listOf(
             ImageContent(data = Base64.getEncoder().encodeToString(bytes), mimeType = "image/png")
         ))
     }
 
-    private fun scalePng(png: ByteArray, scale: Double): ByteArray {
-        require(scale > 0.0 && scale <= 1.0) { "scale must be greater than 0 and at most 1" }
-        val original = ImageIO.read(ByteArrayInputStream(png))
-        val targetWidth = (original.width * scale).toInt().coerceAtLeast(1)
-        val targetHeight = (original.height * scale).toInt().coerceAtLeast(1)
-        val scaled = BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB)
-        scaled.createGraphics().apply {
-            setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-            drawImage(original, 0, 0, targetWidth, targetHeight, null)
-            dispose()
+    private suspend fun prepareImage(documentId: String, imageId: String, scale: Double?): ByteArray? {
+        val image = kollab.getImage(documentId, imageId) ?: return null
+        val bytes: ByteArray
+        if (scale != null) {
+            bytes = imageScaler.scale(image.bytes, scale)
+        } else {
+            bytes = image.bytes
         }
-        val out = ByteArrayOutputStream()
-        ImageIO.write(scaled, "png", out)
-        return out.toByteArray()
+        return bytes
     }
+
+    private fun requiredString(args: JsonObject, key: String): String =
+        requireNotNull(args[key]) { "Missing required argument: $key" }.jsonPrimitive.content
+
+    private fun requiredInt(args: JsonObject, key: String): Int =
+        requireNotNull(args[key]) { "Missing required argument: $key" }.jsonPrimitive.int
 }

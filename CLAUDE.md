@@ -45,24 +45,7 @@ src/test/kotlin/
 
 ## Coding guidelines
 
-### DDD / Package rules
-
-- `domain/` has zero imports from `adapter/` — domain model and ports are framework-agnostic
-- Adapters import from `domain/` and `domain/model/` only — never from other adapters
-- `LibreKollabPlugin` is the composition root: the only place that instantiates `LibreKollab` and `McpServer` and wires them together
-- All classes that talk to external systems support constructor injection so tests can pass container coordinates
-
-### Kotlin style
-
-- Block body `{ }` for `Unit`-returning functions — expression body `= expr` infers the last expression's type; JUnit rejects `@Test` methods that return non-`Unit`
-- `data class` for value objects; `sealed interface` for polymorphic domain types (e.g. `TextProperty`)
-- Values always computable from other fields must not be nullable — use a default parameter instead (e.g. `TextAnchor.id`)
-- No comments unless the WHY is non-obvious; never describe WHAT the code does
-
-### I/O and concurrency
-
-- UNO calls are serialized via `limitedParallelism(1)` on `Dispatchers.IO` in `CoreKollab` — never call UNO from multiple coroutines concurrently
-- `KollabAPI` functions are `suspend` — callers must use coroutines or `runBlocking` in tests
+See [`codingRules.md`](codingRules.md) for the full, numbered list (DDD/package rules, Kotlin style, I/O and concurrency). Add new rules there, appended with the next free number.
 
 ## CoreKollab / LibreKollab / TestKollab
 

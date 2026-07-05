@@ -4,11 +4,17 @@ import ch.qos.logback.core.PropertyDefinerBase
 
 class LogDirResolver : PropertyDefinerBase() {
     override fun getPropertyValue(): String {
-        val os = System.getProperty("os.name", "").lowercase()
-        return if (os.contains("win")) {
-            "${System.getenv("APPDATA")}\\librekollab"
+        val logDir: String
+        if (isWindows()) {
+            logDir = "${System.getenv("APPDATA")}\\librekollab"
         } else {
-            "${System.getProperty("user.home")}/.config/librekollab"
+            logDir = "${System.getProperty("user.home")}/.config/librekollab"
         }
+        return logDir
+    }
+
+    private fun isWindows(): Boolean {
+        val os = System.getProperty("os.name", "").lowercase()
+        return os.contains("win")
     }
 }

@@ -10,12 +10,15 @@ data class TextAnchor(
     val charStart: Int,
     val charEnd: Int,
     val id: String = computeAnchorId(text, paragraphIndex, charStart, charEnd)
-){
+) {
     companion object {
+        private const val HASH_ALGORITHM = "SHA-256"
+        private const val HEX_FORMAT = "%02x"
+
         private fun computeAnchorId(text: String, paragraphIndex: Int, charStart: Int, charEnd: Int): String =
-            MessageDigest.getInstance("SHA-256")
+            MessageDigest.getInstance(HASH_ALGORITHM)
                 .digest("$text:$paragraphIndex:$charStart:$charEnd".toByteArray())
-                .joinToString("") { "%02x".format(it) }
+                .joinToString("") { HEX_FORMAT.format(it) }
                 .take(12)
     }
 }

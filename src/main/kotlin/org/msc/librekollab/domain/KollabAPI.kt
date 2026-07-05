@@ -14,9 +14,13 @@ import org.msc.librekollab.domain.model.text.MarkedText
  * Build: ./gradlew oxt  →  build/oxt/LibreKollab-1.0-SNAPSHOT.oxt
  */
 interface KollabAPI {
+    companion object {
+        const val UNKNOWN_AUTHOR = "Unknown Author"
+    }
+
     suspend fun listDocuments(): List<String>
 
-    suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String = "")
+    suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String = UNKNOWN_AUTHOR)
 
     suspend fun getChanges(documentId: String): List<Change>
     suspend fun getPageCount(documentId: String): Int

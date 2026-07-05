@@ -5,14 +5,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class Comment(
-    val id: String,
     val anchor: TextAnchor,
     val author: String,
     val content: String,
-    val dateTime: LocalDateTime
-) {
-    companion object {
-        fun of(anchor: TextAnchor, author: String, content: String, dateTime: LocalDateTime): Comment =
-            Comment(anchor.id, anchor, author, content, dateTime)
-    }
-}
+    val dateTime: LocalDateTime,
+    val id: String = anchor.id
+)

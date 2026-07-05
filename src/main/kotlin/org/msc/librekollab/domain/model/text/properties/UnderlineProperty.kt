@@ -6,4 +6,4 @@ import org.msc.librekollab.domain.model.text.MarkIndex
 
 @Serializable
 @SerialName("underline")
-data class UnderlineProperty(override val markIndex: MarkIndex) : TextProperty()
+data class UnderlineProperty(override val markIndex: MarkIndex) : TextProperty
