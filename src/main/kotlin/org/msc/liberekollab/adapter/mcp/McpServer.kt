@@ -27,13 +27,15 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.msc.liberekollab.domain.KollabAPI
 import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
+import org.msc.liberekollab.domain.model.image.Image
+import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
-import org.msc.liberekollab.domain.KollabAPI
 
 class McpServer(private val kollab: KollabAPI) {
 
@@ -248,6 +250,29 @@ class McpServer(private val kollab: KollabAPI) {
                 required = listOf("documentId", "commentId")
             )
         ) { deleteComment(it.params.arguments as JsonObject) }
+
+        server.addTool(
+            name = "get_image_metas",
+            description = "List metadata for all images embedded in a document as a JSON array",
+            inputSchema = ToolSchema(
+                properties = buildJsonObject {
+                    put("documentId", buildJsonObject { put("type", "string") })
+                },
+                required = listOf("documentId")
+            )
+        ) { getImageMetas(it.params.arguments as JsonObject) }
+
+        server.addTool(
+            name = "get_image",
+            description = "Get a single image by its ID as JSON, including Base64-encoded PNG data",
+            inputSchema = ToolSchema(
+                properties = buildJsonObject {
+                    put("documentId", buildJsonObject { put("type", "string") })
+                    put("imageId", buildJsonObject { put("type", "string") })
+                },
+                required = listOf("documentId", "imageId")
+            )
+        ) { getImage(it.params.arguments as JsonObject) }
     }
 
     private suspend fun listDocuments(): CallToolResult {
@@ -362,5 +387,21 @@ class McpServer(private val kollab: KollabAPI) {
         val commentId = args["commentId"]!!.jsonPrimitive.content
         kollab.deleteComment(documentId, commentId)
         return CallToolResult(content = listOf(TextContent("ok")))
+    }
+
+    private suspend fun getImageMetas(args: JsonObject): CallToolResult {
+        val documentId = args["documentId"]!!.jsonPrimitive.content
+        return CallToolResult(content = listOf(TextContent(
+            Json.encodeToString(ListSerializer(ImageMeta.serializer()), kollab.getImageMetas(documentId))
+        )))
+    }
+
+    private suspend fun getImage(args: JsonObject): CallToolResult {
+        val documentId = args["documentId"]!!.jsonPrimitive.content
+        val imageId = args["imageId"]!!.jsonPrimitive.content
+        val image = kollab.getImage(documentId, imageId)
+        return CallToolResult(content = listOf(TextContent(
+            if (image != null) Json.encodeToString(Image.serializer(), image) else "not found"
+        )))
     }
 }

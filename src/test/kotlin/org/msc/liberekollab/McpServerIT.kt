@@ -34,6 +34,8 @@ import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeAction
+import org.msc.liberekollab.domain.model.image.Image
+import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkIndex
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.msc.liberekollab.domain.model.text.properties.BoldProperty
@@ -132,6 +134,17 @@ class McpServerIT {
             testScope.cancel()
             sharedKollab.close()
         }
+    }
+
+    private fun perceptualHash(imageBytes: ByteArray): Long {
+        val img = javax.imageio.ImageIO.read(imageBytes.inputStream())
+        val small = java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_BYTE_GRAY)
+        val g = small.createGraphics()
+        g.drawImage(img.getScaledInstance(8, 8, java.awt.Image.SCALE_SMOOTH), 0, 0, null)
+        g.dispose()
+        val pixels = (0 until 64).map { small.raster.getSampleDouble(it % 8, it / 8, 0) }
+        val avg = pixels.average()
+        return pixels.foldIndexed(0L) { i, acc, p -> if (p >= avg) acc or (1L shl i) else acc }
     }
 
     private fun upload(resourceName: String): String {
@@ -526,6 +539,43 @@ class McpServerIT {
             assertThat(insertChanges.size).isEqualTo(1)
             assertThat(insertChanges.single().text).isEqualTo(" Dann: Dunkelheit.")
             assertThat(insertChanges.single().author).isEqualTo("Test Author")
+        }
+    }
+
+    @Test
+    fun `T20 get_image_metas returns metadata for all embedded images`() {
+        runBlocking {
+            val documentId = upload("test_with_image.odt")
+            val json = tool("get_image_metas", buildJsonObject { put("documentId", documentId) })
+            val metas = Json.decodeFromString(ListSerializer(ImageMeta.serializer()), json)
+            // LibreOffice may represent one embedded image with multiple internal entries
+            val meta = metas.first { it.width == 17000 && it.height == 13605 }
+            assertThat(meta.imageId).hasSize(12)
+            assertThat(meta.page).isEqualTo(1)
+            assertThat(meta.textAnchor.paragraphIndex).isEqualTo(2)
+        }
+    }
+
+    @Test
+    fun `T21 get_image returns Base64 PNG data matching the meta`() {
+        runBlocking {
+            val documentId = upload("test_with_image.odt")
+            val metasJson = tool("get_image_metas", buildJsonObject { put("documentId", documentId) })
+            val metas = Json.decodeFromString(ListSerializer(ImageMeta.serializer()), metasJson)
+            val meta = metas.first { it.width == 17000 && it.height == 13605 }
+
+            val imageJson = tool("get_image", buildJsonObject {
+                put("documentId", documentId)
+                put("imageId", meta.imageId)
+            })
+            val image = Json.decodeFromString(Image.serializer(), imageJson)
+            assertThat(image.id).isEqualTo(meta.imageId)
+            assertThat(image.width).isEqualTo(17000)
+            assertThat(image.height).isEqualTo(13605)
+            assertThat(image.textAnchor.paragraphIndex).isEqualTo(2)
+            val exportedBytes = java.util.Base64.getDecoder().decode(image.data)
+            val originalBytes = javaClass.getResourceAsStream("/FrierenTest.png")!!.readBytes()
+            assertThat(perceptualHash(exportedBytes)).isEqualTo(perceptualHash(originalBytes))
         }
     }
 }

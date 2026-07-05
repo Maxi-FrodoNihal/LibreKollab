@@ -1,14 +1,23 @@
 package org.msc.liberekollab.adapter.libreoffice
 
 import com.sun.star.awt.FontSlant
+import com.sun.star.awt.Size
+import com.sun.star.beans.PropertyValue
 import com.sun.star.beans.XPropertySet
 import com.sun.star.container.XEnumerationAccess
+import com.sun.star.document.XExporter
+import com.sun.star.document.XFilter
 import com.sun.star.frame.XModel
+import com.sun.star.io.XInputStream
+import com.sun.star.io.XOutputStream
+import com.sun.star.lang.XComponent
+import com.sun.star.lang.XMultiComponentFactory
 import com.sun.star.lang.XMultiServiceFactory
 import com.sun.star.lang.XServiceInfo
 import com.sun.star.text.ControlCharacter
 import com.sun.star.text.XPageCursor
 import com.sun.star.text.XTextContent
+import com.sun.star.text.XTextGraphicObjectsSupplier
 import com.sun.star.text.XTextCursor
 import com.sun.star.text.XTextDocument
 import com.sun.star.text.XTextFieldsSupplier
@@ -16,15 +25,19 @@ import com.sun.star.text.XTextRange
 import com.sun.star.text.XTextRangeCompare
 import com.sun.star.text.XTextViewCursorSupplier
 import com.sun.star.uno.UnoRuntime
+import com.sun.star.uno.XComponentContext
 import com.sun.star.util.DateTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
+import org.msc.liberekollab.domain.KollabAPI
 import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeAction
 import org.msc.liberekollab.domain.model.change.ChangeStatus
+import org.msc.liberekollab.domain.model.image.Image
+import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkIndex
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.msc.liberekollab.domain.model.text.properties.BoldProperty
@@ -32,11 +45,14 @@ import org.msc.liberekollab.domain.model.text.properties.ItalicProperty
 import org.msc.liberekollab.domain.model.text.properties.StrikethroughProperty
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
 import org.msc.liberekollab.domain.model.text.properties.UnderlineProperty
-import org.msc.liberekollab.domain.KollabAPI
+import java.util.Base64
 import kotlin.reflect.KClass
+import org.slf4j.LoggerFactory
 
-abstract class CoreKollab : KollabAPI {
+abstract class CoreKollab(protected val componentContext: XComponentContext) : KollabAPI {
 
+    @Suppress("unused")
+    private val log = LoggerFactory.getLogger(CoreKollab::class.java)
     protected val libreOfficeDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     abstract override suspend fun listDocuments(): List<String>
@@ -463,6 +479,74 @@ abstract class CoreKollab : KollabAPI {
 
         val charStrikeout = try { (propSet.getPropertyValue("CharStrikeout") as? Number)?.toInt() } catch (e: Exception) { null }
         if (charStrikeout != null && charStrikeout != 0) properties.add(StrikethroughProperty(idx))
+    }
+
+    override suspend fun getImageMetas(documentId: String): List<ImageMeta> = withContext(libreOfficeDispatcher) {
+        withDocument(documentId) { textDoc ->
+            val model = UnoRuntime.queryInterface(XModel::class.java, textDoc)
+            val vc = UnoRuntime.queryInterface(XTextViewCursorSupplier::class.java, model.currentController).viewCursor
+            val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
+            getGraphicShapes(textDoc).map { shape ->
+                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, shape)
+                val size = propSet.getPropertyValue("Size") as Size
+                val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
+                val anchor = buildTextAnchor(textDoc, anchorRange)
+                vc.gotoRange(anchorRange.start, false)
+                val page = pc.page.toInt()
+                val data = exportShapeToBase64(shape)
+                val image = Image(data, size.Width, size.Height, anchor)
+                ImageMeta(image.id, size.Width, size.Height, page, anchor)
+            }
+        }
+    }
+
+    override suspend fun getImage(documentId: String, imageId: String): Image? = withContext(libreOfficeDispatcher) {
+        withDocument(documentId) { textDoc ->
+            getGraphicShapes(textDoc).firstNotNullOfOrNull { shape ->
+                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, shape)
+                val size = propSet.getPropertyValue("Size") as Size
+                val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
+                val anchor = buildTextAnchor(textDoc, anchorRange)
+                val data = exportShapeToBase64(shape)
+                Image(data, size.Width, size.Height, anchor).takeIf { it.id == imageId }
+            }
+        }
+    }
+
+    private fun getGraphicShapes(textDoc: XTextDocument): List<Any> {
+        val supplier = UnoRuntime.queryInterface(XTextGraphicObjectsSupplier::class.java, textDoc)
+            ?: return emptyList()
+        val nameAccess = supplier.graphicObjects
+        return nameAccess.elementNames.mapNotNull { nameAccess.getByName(it) }
+    }
+
+    private fun exportShapeToBase64(shape: Any): String {
+        val smgr = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, componentContext.serviceManager)
+        val pipeObj = smgr.createInstanceWithContext("com.sun.star.io.Pipe", componentContext)
+        val pipeIn = UnoRuntime.queryInterface(XInputStream::class.java, pipeObj)
+        val pipeOut = UnoRuntime.queryInterface(XOutputStream::class.java, pipeObj)
+        val exporter = UnoRuntime.queryInterface(
+            XExporter::class.java,
+            smgr.createInstanceWithContext("com.sun.star.drawing.GraphicExportFilter", componentContext)
+        )
+        exporter.setSourceDocument(
+            UnoRuntime.queryInterface(XComponent::class.java, shape)
+                ?: throw IllegalStateException("Graphic shape does not implement XComponent")
+        )
+        UnoRuntime.queryInterface(XFilter::class.java, exporter).filter(arrayOf(
+            PropertyValue().apply { Name = "OutputStream"; Value = pipeOut },
+            PropertyValue().apply { Name = "MediaType"; Value = "image/png" }
+        ))
+        pipeOut.closeOutput()
+        val out = java.io.ByteArrayOutputStream()
+        val holder = Array(1) { ByteArray(0) }
+        while (true) {
+            val n = pipeIn.readBytes(holder, 65536)
+            if (n == 0) break
+            out.write(holder[0])
+        }
+        pipeIn.closeInput()
+        return Base64.getEncoder().encodeToString(out.toByteArray())
     }
 
     // Inserts newText.text one formatting run at a time, setting the cursor's character properties

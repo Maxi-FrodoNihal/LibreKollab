@@ -14,13 +14,13 @@ import com.sun.star.uno.XComponentContext
 import com.sun.star.util.XChangesBatch
 import kotlinx.coroutines.withContext
 
-class LibereKollab(private val context: XComponentContext) : CoreKollab() {
+class LibereKollab(context: XComponentContext) : CoreKollab(context) {
 
     private fun getDesktop(): XDesktop {
-        val serviceManager = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, context.serviceManager)
+        val serviceManager = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, componentContext.serviceManager)
         return UnoRuntime.queryInterface(
             XDesktop::class.java,
-            serviceManager.createInstanceWithContext("com.sun.star.frame.Desktop", context)
+            serviceManager.createInstanceWithContext("com.sun.star.frame.Desktop", componentContext)
         )
     }
 
@@ -55,7 +55,7 @@ class LibereKollab(private val context: XComponentContext) : CoreKollab() {
         if (author.isEmpty()) { block(); return }
         val configProvider = UnoRuntime.queryInterface(
             XMultiServiceFactory::class.java,
-            context.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", context)
+            componentContext.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", componentContext)
         )
         val nodeArg = PropertyValue().apply { Name = "nodepath"; Value = "/org.openoffice.UserProfile/Data" }
         val access = UnoRuntime.queryInterface(

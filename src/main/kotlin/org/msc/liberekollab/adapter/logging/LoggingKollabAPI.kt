@@ -5,6 +5,8 @@ import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
 import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
+import org.msc.liberekollab.domain.model.image.Image
+import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.slf4j.LoggerFactory
 
@@ -99,5 +101,17 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
     override suspend fun deleteComment(documentId: String, commentId: String) {
         log.info("deleteComment(documentId=$documentId, commentId=$commentId)")
         delegate.deleteComment(documentId, commentId)
+    }
+
+    override suspend fun getImageMetas(documentId: String): List<ImageMeta> {
+        val result = delegate.getImageMetas(documentId)
+        log.info("getImageMetas(documentId=$documentId) = ${result.size} images")
+        return result
+    }
+
+    override suspend fun getImage(documentId: String, imageId: String): Image? {
+        val result = delegate.getImage(documentId, imageId)
+        log.info("getImage(documentId=$documentId, imageId=$imageId) = ${if (result != null) "found" else "not found"}")
+        return result
     }
 }

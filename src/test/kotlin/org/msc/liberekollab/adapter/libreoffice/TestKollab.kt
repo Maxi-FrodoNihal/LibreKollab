@@ -19,11 +19,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class TestKollab(
-    private val context: XComponentContext,
+    context: XComponentContext,
     private val basePath: String,
     private val containerWorkspacePath: String,
     private val onClose: () -> Unit = {}
-) : CoreKollab() {
+) : CoreKollab(context) {
 
     companion object {
         fun viaSocket(host: String, port: Int, basePath: String, containerWorkspacePath: String): TestKollab {
@@ -52,7 +52,7 @@ class TestKollab(
         if (author.isEmpty()) { block(); return }
         val configProvider = UnoRuntime.queryInterface(
             XMultiServiceFactory::class.java,
-            context.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", context)
+            componentContext.serviceManager.createInstanceWithContext("com.sun.star.configuration.ConfigurationProvider", componentContext)
         )
         val nodeArg = PropertyValue().apply { Name = "nodepath"; Value = "/org.openoffice.UserProfile/Data" }
         val access = UnoRuntime.queryInterface(
@@ -78,10 +78,10 @@ class TestKollab(
     }
 
     private fun getDesktop(): XComponentLoader {
-        val serviceManager = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, context.serviceManager)
+        val serviceManager = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, componentContext.serviceManager)
         return UnoRuntime.queryInterface(
             XComponentLoader::class.java,
-            serviceManager.createInstanceWithContext("com.sun.star.frame.Desktop", context)
+            serviceManager.createInstanceWithContext("com.sun.star.frame.Desktop", componentContext)
         )
     }
 

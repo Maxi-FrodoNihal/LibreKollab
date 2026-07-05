@@ -1,6 +1,6 @@
 # LibereKollab
 
-Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, and manage comments — all via in-process UNO.
+Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, manage comments, and read embedded images — all via in-process UNO.
 
 ## Architecture
 
@@ -24,6 +24,7 @@ org.msc.liberekollab
 │   ├── KollabAPI.kt    # central port — see KDoc for build instructions
 │   └── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
 │       ├── change/
+│       ├── image/      # Image, ImageMeta
 │       └── text/
 │           └── properties/
 └── adapter/
@@ -153,6 +154,17 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 `insertFormattedText` (in `CoreKollab`, used by `editText`) inserts `newText` one formatting run at a time, setting the cursor's character properties *before* each `insertString` call — never insert plain text and reformat it afterward. Reformatting already-inserted, not-yet-accepted text makes LibreOffice record the attribute change as its own "Format" redline, splitting one logical insert into two adjacent redlines. `getChanges()` reads redlines by bracket (`IsStart`/`IsEnd`) and resets its accumulator on every redline end, so a Format redline ending between two Insert-redline halves silently drops everything after it. This only reproduces against a real, GUI-attached LibreOffice — see Testing below.
 
+## Images
+
+`ImageMeta(imageId, width, height, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit).
+
+`Image(data, width, height, textAnchor, id)` — full image returned by `getImage`. `data` is a Base64-encoded PNG string. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor.
+
+Implementation in `CoreKollab`:
+- `XTextGraphicObjectsSupplier.getGraphicObjects()` enumerates all embedded images by name.
+- Each shape is exported to PNG via `GraphicExportFilter` (`com.sun.star.drawing.GraphicExportFilter`): `XExporter.setSourceDocument(shape)` + `XFilter.filter(props)` writing to a `com.sun.star.io.Pipe`. The Pipe implements both `XInputStream` and `XOutputStream` and lives on the LibreOffice side — bytes are read back over the UNO bridge via `XInputStream.readBytes()`.
+- Page number is resolved by moving a `XPageCursor` to the image anchor.
+
 ## Comments (UNO annotations)
 
 `TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (12-char SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"`).
@@ -180,6 +192,8 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 | `add_comment` | `documentId`, `commentText`, `author`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd` | — |
 | `update_comment` | `documentId`, `commentId`, `newText` | — |
 | `delete_comment` | `documentId`, `commentId` | — |
+| `get_image_metas` | `documentId` | — |
+| `get_image` | `documentId`, `imageId` | — |
 
 ## Logging
 

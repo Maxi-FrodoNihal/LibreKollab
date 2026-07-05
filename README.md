@@ -10,6 +10,7 @@ LibereKollab bridges LibreOffice and AI agents. The extension embeds an MCP serv
 - **Edit** text ranges — all edits are recorded as LibreOffice tracked changes for human review
 - **Inspect** tracked changes with `BEFORE` / `FUSION` / `AFTER` views
 - **Manage comments** — add, update, delete, and retrieve annotations anchored to specific text ranges
+- **Read images** — list embedded image metadata (size, page, position) and retrieve the full image as Base64-encoded PNG
 
 Humans retain full control: accept or reject tracked changes directly in LibreOffice.
 
@@ -87,6 +88,8 @@ This registers the server globally for all your Claude Code sessions.
 | `add_comment` | Add a comment anchored to a text range |
 | `update_comment` | Update comment text |
 | `delete_comment` | Delete a comment |
+| `get_image_metas` | List metadata for all embedded images (id, size in 1/100mm, page, anchor) |
+| `get_image` | Retrieve a single image as Base64-encoded PNG by its ID |
 
 The `documentId` parameter is the file name of the open document (e.g. `report.odt`).
 

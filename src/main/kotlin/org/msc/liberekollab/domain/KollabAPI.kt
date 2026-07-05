@@ -3,7 +3,9 @@ package org.msc.liberekollab.domain
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
 import org.msc.liberekollab.domain.model.Comment
+import org.msc.liberekollab.domain.model.image.Image
 import org.msc.liberekollab.domain.model.TextAnchor
+import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkedText
 
 /**
@@ -32,4 +34,7 @@ interface KollabAPI {
     suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor)
     suspend fun updateComment(documentId: String, commentId: String, newText: String)
     suspend fun deleteComment(documentId: String, commentId: String)
+
+    suspend fun getImageMetas(documentId: String): List<ImageMeta>
+    suspend fun getImage(documentId: String, imageId: String): Image?
 }
