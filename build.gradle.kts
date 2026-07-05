@@ -3,7 +3,7 @@ plugins {
     kotlin("plugin.serialization") version "2.4.0"
 }
 
-group = "org.msc.liberekollab"
+group = "org.msc.librekollab"
 version = "1.0-SNAPSHOT"
 
 kotlin {
@@ -37,7 +37,7 @@ dependencies {
 }
 
 val fatJar by tasks.registering(Jar::class) {
-    archiveBaseName.set("liberekollab-all")
+    archiveBaseName.set("librekollab-all")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude("module-info.class")
     exclude("META-INF/versions/*/module-info.class")
@@ -49,20 +49,20 @@ val fatJar by tasks.registering(Jar::class) {
             .map { zipTree(it) }
     })
     manifest {
-        attributes["Implementation-Title"] = "LibereKollab"
+        attributes["Implementation-Title"] = "LibreKollab"
         attributes["Implementation-Version"] = version
-        attributes["RegistrationClassName"] = "org.msc.liberekollab.adapter.libreoffice.plugin.LibereKollabPlugin"
+        attributes["RegistrationClassName"] = "org.msc.librekollab.adapter.libreoffice.plugin.LibreKollabPlugin"
     }
 }
 
 val oxt by tasks.registering(Zip::class) {
     group = "build"
     description = "Packages the LibreOffice extension (.oxt)"
-    archiveBaseName.set("LibereKollab")
+    archiveBaseName.set("LibreKollab")
     archiveExtension.set("oxt")
     destinationDirectory.set(layout.buildDirectory.dir("oxt"))
     dependsOn(fatJar)
-    from(fatJar) { rename { "liberekollab-all.jar" } }
+    from(fatJar) { rename { "librekollab-all.jar" } }
     from("oxt/META-INF") { into("META-INF") }
     from("oxt") { include("*.components", "*.xcu", "*.xml", "*.txt") }
     from("oxt/dialogs") { into("dialogs") }

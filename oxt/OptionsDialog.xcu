@@ -5,18 +5,18 @@
     <node oor:name="Nodes">
         <node oor:name="Internet" oor:op="fuse">
             <node oor:name="Leaves">
-                <node oor:name="org.msc.liberekollab.McpServer" oor:op="replace">
+                <node oor:name="org.msc.librekollab.McpServer" oor:op="replace">
                     <prop oor:name="Id">
-                        <value>org.msc.liberekollab.McpServer</value>
+                        <value>org.msc.librekollab.McpServer</value>
                     </prop>
                     <prop oor:name="Label">
-                        <value xml:lang="en-US">LibereKollab MCP Server</value>
+                        <value xml:lang="en-US">LibreKollab MCP Server</value>
                     </prop>
                     <prop oor:name="OptionsPage">
                         <value>%origin%/dialogs/OptionsDialog.xdl</value>
                     </prop>
                     <prop oor:name="EventHandlerService">
-                        <value>org.msc.liberekollab.adapter.libreoffice.plugin.OptionsHandler</value>
+                        <value>org.msc.librekollab.adapter.libreoffice.plugin.OptionsHandler</value>
                     </prop>
                 </node>
             </node>
