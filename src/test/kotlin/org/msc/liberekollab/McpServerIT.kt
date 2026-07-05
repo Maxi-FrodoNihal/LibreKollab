@@ -5,6 +5,7 @@ import com.github.dockerjava.api.model.Volume
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
 import io.modelcontextprotocol.kotlin.sdk.server.StdioServerTransport
+import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.CoroutineScope
@@ -34,7 +35,6 @@ import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeAction
-import org.msc.liberekollab.domain.model.image.Image
 import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkIndex
 import org.msc.liberekollab.domain.model.text.MarkedText
@@ -553,29 +553,59 @@ class McpServerIT {
             assertThat(meta.imageId).hasSize(12)
             assertThat(meta.page).isEqualTo(1)
             assertThat(meta.textAnchor.paragraphIndex).isEqualTo(2)
+            assertThat(meta.sizeMb).isGreaterThan(0.0)
         }
     }
 
     @Test
-    fun `T21 get_image returns Base64 PNG data matching the meta`() {
+    fun `T21 get_image returns PNG image content matching the meta`() {
         runBlocking {
             val documentId = upload("test_with_image.odt")
             val metasJson = tool("get_image_metas", buildJsonObject { put("documentId", documentId) })
             val metas = Json.decodeFromString(ListSerializer(ImageMeta.serializer()), metasJson)
             val meta = metas.first { it.width == 17000 && it.height == 13605 }
 
-            val imageJson = tool("get_image", buildJsonObject {
+            val result = sharedClient.callTool("get_image", buildJsonObject {
                 put("documentId", documentId)
                 put("imageId", meta.imageId)
             })
-            val image = Json.decodeFromString(Image.serializer(), imageJson)
-            assertThat(image.id).isEqualTo(meta.imageId)
-            assertThat(image.width).isEqualTo(17000)
-            assertThat(image.height).isEqualTo(13605)
-            assertThat(image.textAnchor.paragraphIndex).isEqualTo(2)
-            val exportedBytes = java.util.Base64.getDecoder().decode(image.data)
+            val imageContent = result.content.first() as ImageContent
+            assertThat(imageContent.mimeType).isEqualTo("image/png")
+            val exportedBytes = java.util.Base64.getDecoder().decode(imageContent.data)
+            assertThat(exportedBytes.size.toDouble() / (1024.0 * 1024.0)).isEqualTo(meta.sizeMb)
             val originalBytes = javaClass.getResourceAsStream("/FrierenTest.png")!!.readBytes()
             assertThat(perceptualHash(exportedBytes)).isEqualTo(perceptualHash(originalBytes))
+        }
+    }
+
+    @Test
+    fun `T22 get_image with scale returns a downscaled PNG`() {
+        runBlocking {
+            val documentId = upload("test_with_image.odt")
+            val metasJson = tool("get_image_metas", buildJsonObject { put("documentId", documentId) })
+            val metas = Json.decodeFromString(ListSerializer(ImageMeta.serializer()), metasJson)
+            val meta = metas.first { it.width == 17000 && it.height == 13605 }
+
+            val fullResult = sharedClient.callTool("get_image", buildJsonObject {
+                put("documentId", documentId)
+                put("imageId", meta.imageId)
+            })
+            val fullBytes = java.util.Base64.getDecoder().decode((fullResult.content.first() as ImageContent).data)
+
+            val scaledResult = sharedClient.callTool("get_image", buildJsonObject {
+                put("documentId", documentId)
+                put("imageId", meta.imageId)
+                put("scale", 0.25)
+            })
+            val scaledContent = scaledResult.content.first() as ImageContent
+            assertThat(scaledContent.mimeType).isEqualTo("image/png")
+            val scaledBytes = java.util.Base64.getDecoder().decode(scaledContent.data)
+            assertThat(scaledBytes.size).isLessThan(fullBytes.size)
+
+            val scaledImage = javax.imageio.ImageIO.read(scaledBytes.inputStream())
+            val fullImage = javax.imageio.ImageIO.read(fullBytes.inputStream())
+            assertThat(scaledImage.width).isEqualTo((fullImage.width * 0.25).toInt())
+            assertThat(scaledImage.height).isEqualTo((fullImage.height * 0.25).toInt())
         }
     }
 }

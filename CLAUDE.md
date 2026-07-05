@@ -156,9 +156,9 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 ## Images
 
-`ImageMeta(imageId, width, height, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit).
+`ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` is the exported PNG's size, so callers can decide upfront whether to request a downscaled `get_image` call.
 
-`Image(data, width, height, textAnchor, id)` — full image returned by `getImage`. `data` is a Base64-encoded PNG string. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor.
+`Image(bytes, width, height, textAnchor, id)` — full image returned by `getImage`. `bytes` is the raw PNG data; Base64 encoding only happens at the MCP boundary in `McpServer`, never in the domain. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor. The `get_image` MCP tool returns this as a native `ImageContent` block (not JSON text) and accepts an optional `scale` argument (0 exclusive–1 inclusive) to downscale the PNG in `McpServer` before Base64-encoding it — the domain layer always exports at original resolution.
 
 Implementation in `CoreKollab`:
 - `XTextGraphicObjectsSupplier.getGraphicObjects()` enumerates all embedded images by name.
@@ -193,7 +193,7 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 | `update_comment` | `documentId`, `commentId`, `newText` | — |
 | `delete_comment` | `documentId`, `commentId` | — |
 | `get_image_metas` | `documentId` | — |
-| `get_image` | `documentId`, `imageId` | — |
+| `get_image` | `documentId`, `imageId` | `scale` |
 
 ## Logging
 

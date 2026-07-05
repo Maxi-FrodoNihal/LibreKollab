@@ -45,7 +45,6 @@ import org.msc.liberekollab.domain.model.text.properties.ItalicProperty
 import org.msc.liberekollab.domain.model.text.properties.StrikethroughProperty
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
 import org.msc.liberekollab.domain.model.text.properties.UnderlineProperty
-import java.util.Base64
 import kotlin.reflect.KClass
 import org.slf4j.LoggerFactory
 
@@ -493,9 +492,10 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
                 val anchor = buildTextAnchor(textDoc, anchorRange)
                 vc.gotoRange(anchorRange.start, false)
                 val page = pc.page.toInt()
-                val data = exportShapeToBase64(shape)
-                val image = Image(data, size.Width, size.Height, anchor)
-                ImageMeta(image.id, size.Width, size.Height, page, anchor)
+                val bytes = exportShapePng(shape)
+                val image = Image(bytes, size.Width, size.Height, anchor)
+                val sizeMb = bytes.size / (1024.0 * 1024.0)
+                ImageMeta(image.id, size.Width, size.Height, sizeMb, page, anchor)
             }
         }
     }
@@ -507,8 +507,8 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
                 val size = propSet.getPropertyValue("Size") as Size
                 val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
                 val anchor = buildTextAnchor(textDoc, anchorRange)
-                val data = exportShapeToBase64(shape)
-                Image(data, size.Width, size.Height, anchor).takeIf { it.id == imageId }
+                val bytes = exportShapePng(shape)
+                Image(bytes, size.Width, size.Height, anchor).takeIf { it.id == imageId }
             }
         }
     }
@@ -520,7 +520,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         return nameAccess.elementNames.mapNotNull { nameAccess.getByName(it) }
     }
 
-    private fun exportShapeToBase64(shape: Any): String {
+    private fun exportShapePng(shape: Any): ByteArray {
         val smgr = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, componentContext.serviceManager)
         val pipeObj = smgr.createInstanceWithContext("com.sun.star.io.Pipe", componentContext)
         val pipeIn = UnoRuntime.queryInterface(XInputStream::class.java, pipeObj)
@@ -546,7 +546,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
             out.write(holder[0])
         }
         pipeIn.closeInput()
-        return Base64.getEncoder().encodeToString(out.toByteArray())
+        return out.toByteArray()
     }
 
     // Inserts newText.text one formatting run at a time, setting the cursor's character properties

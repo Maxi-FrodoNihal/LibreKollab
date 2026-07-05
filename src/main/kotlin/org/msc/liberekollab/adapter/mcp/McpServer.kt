@@ -11,6 +11,7 @@ import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
@@ -24,6 +25,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -32,10 +34,15 @@ import org.msc.liberekollab.domain.model.Comment
 import org.msc.liberekollab.domain.model.TextAnchor
 import org.msc.liberekollab.domain.model.change.Change
 import org.msc.liberekollab.domain.model.change.ChangeStatus
-import org.msc.liberekollab.domain.model.image.Image
 import org.msc.liberekollab.domain.model.image.ImageMeta
 import org.msc.liberekollab.domain.model.text.MarkedText
 import org.msc.liberekollab.domain.model.text.properties.TextProperty
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.Base64
+import javax.imageio.ImageIO
 
 class McpServer(private val kollab: KollabAPI) {
 
@@ -264,11 +271,14 @@ class McpServer(private val kollab: KollabAPI) {
 
         server.addTool(
             name = "get_image",
-            description = "Get a single image by its ID as JSON, including Base64-encoded PNG data",
+            description = "Get a single image by its ID as a PNG image. Optionally pass 'scale' " +
+                "(0 exclusive to 1 inclusive) to downscale the PNG before it is returned, e.g. 0.25 " +
+                "to shrink a too-large image to a quarter of its original width/height.",
             inputSchema = ToolSchema(
                 properties = buildJsonObject {
                     put("documentId", buildJsonObject { put("type", "string") })
                     put("imageId", buildJsonObject { put("type", "string") })
+                    put("scale", buildJsonObject { put("type", "number") })
                 },
                 required = listOf("documentId", "imageId")
             )
@@ -399,9 +409,28 @@ class McpServer(private val kollab: KollabAPI) {
     private suspend fun getImage(args: JsonObject): CallToolResult {
         val documentId = args["documentId"]!!.jsonPrimitive.content
         val imageId = args["imageId"]!!.jsonPrimitive.content
+        val scale = args["scale"]?.jsonPrimitive?.doubleOrNull
         val image = kollab.getImage(documentId, imageId)
-        return CallToolResult(content = listOf(TextContent(
-            if (image != null) Json.encodeToString(Image.serializer(), image) else "not found"
-        )))
+            ?: return CallToolResult(content = listOf(TextContent("not found")))
+        val bytes = if (scale != null) scalePng(image.bytes, scale) else image.bytes
+        return CallToolResult(content = listOf(
+            ImageContent(data = Base64.getEncoder().encodeToString(bytes), mimeType = "image/png")
+        ))
+    }
+
+    private fun scalePng(png: ByteArray, scale: Double): ByteArray {
+        require(scale > 0.0 && scale <= 1.0) { "scale must be greater than 0 and at most 1" }
+        val original = ImageIO.read(ByteArrayInputStream(png))
+        val targetWidth = (original.width * scale).toInt().coerceAtLeast(1)
+        val targetHeight = (original.height * scale).toInt().coerceAtLeast(1)
+        val scaled = BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB)
+        scaled.createGraphics().apply {
+            setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            drawImage(original, 0, 0, targetWidth, targetHeight, null)
+            dispose()
+        }
+        val out = ByteArrayOutputStream()
+        ImageIO.write(scaled, "png", out)
+        return out.toByteArray()
     }
 }
