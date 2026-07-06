@@ -1,4 +1,6 @@
 Tabellen? -> gemeinsamer domain container
+Nummerierung und Aufzählungen
+
 IO Streams bei den Bildern
 Coding RUles und Refactor
 Readme aufbessern
