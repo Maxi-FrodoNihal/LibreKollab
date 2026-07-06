@@ -3,3 +3,4 @@ IO Streams bei den Bildern
 Coding RUles und Refactor
 Readme aufbessern
 base 64 MB Count
+MCP Request klassen für Json
