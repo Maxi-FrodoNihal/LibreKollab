@@ -9,6 +9,7 @@ import com.sun.star.awt.XTextComponent
 import com.sun.star.awt.XWindow
 import com.sun.star.beans.XPropertySet
 import com.sun.star.comp.loader.FactoryHelper
+import com.sun.star.lang.IllegalArgumentException
 import com.sun.star.lang.XServiceInfo
 import com.sun.star.lang.XSingleComponentFactory
 import com.sun.star.lib.uno.helper.WeakBase
@@ -23,22 +24,55 @@ import java.io.File
 class OptionsHandler(private val context: XComponentContext) :
     WeakBase(), XContainerWindowEventHandler, XServiceInfo {
 
+    companion object {
+        const val SERVICE_NAME = "org.msc.librekollab.OptionsHandler"
+        const val IMPLEMENTATION_NAME = "org.msc.librekollab.adapter.libreoffice.plugin.OptionsHandler"
+
+        private const val METHOD_EXTERNAL_EVENT = "external_event"
+        private const val METHOD_TOGGLE = "toggle"
+        private const val METHOD_OPEN_LOG = "openLog"
+
+        private const val CONTROL_STATUS_LABEL = "lblStatus"
+        private const val CONTROL_PORT_TEXT = "txtPort"
+        private const val CONTROL_TOGGLE_BUTTON = "btnToggle"
+
+        private val log = LoggerFactory.getLogger(OptionsHandler::class.java)
+
+        @JvmStatic
+        @Suppress("UNCHECKED_CAST")
+        fun __getComponentFactory(implementationName: String): XSingleComponentFactory? {
+            if (implementationName == IMPLEMENTATION_NAME) {
+                return FactoryHelper.createComponentFactory(OptionsHandler::class.java, IMPLEMENTATION_NAME) as XSingleComponentFactory
+            }
+            return null
+        }
+    }
+
     private var container: XControlContainer? = null
 
     override fun callHandlerMethod(window: XWindow, eventObject: Any, method: String): Boolean {
         log.info("callHandlerMethod: {}", method)
         return when (method) {
-            "external_event" -> handleExternalEvent(window, eventObject)
-            "toggle" -> { toggle(); true }
-            "openLog" -> { openLogFile(); true }
+            METHOD_EXTERNAL_EVENT -> handleExternalEvent(window, eventObject)
+            METHOD_TOGGLE -> { toggle(); true }
+            METHOD_OPEN_LOG -> { openLogFile(); true }
             else -> false
         }
     }
 
-    override fun getSupportedMethodNames(): Array<String> = arrayOf("external_event", "toggle", "openLog")
+    override fun getSupportedMethodNames(): Array<String> = arrayOf(METHOD_EXTERNAL_EVENT, METHOD_TOGGLE, METHOD_OPEN_LOG)
+
+    override fun getImplementationName(): String = IMPLEMENTATION_NAME
+    override fun supportsService(name: String): Boolean = name == SERVICE_NAME
+    override fun getSupportedServiceNames(): Array<String> = arrayOf(SERVICE_NAME)
 
     private fun handleExternalEvent(window: XWindow, eventObject: Any): Boolean {
-        val event = runCatching { AnyConverter.toString(eventObject) }.getOrNull() ?: return false
+        val event: String
+        try {
+            event = AnyConverter.toString(eventObject)
+        } catch (e: IllegalArgumentException) {
+            return false
+        }
         log.info("external_event: {}", event)
         container = UnoRuntime.queryInterface(XControlContainer::class.java, window)
         return when (event) {
@@ -51,61 +85,64 @@ class OptionsHandler(private val context: XComponentContext) :
     private fun initialize() {
         val c = container ?: return
         val statusModel = UnoRuntime.queryInterface(XPropertySet::class.java,
-            UnoRuntime.queryInterface(XControl::class.java, c.getControl("lblStatus")).getModel())
+            UnoRuntime.queryInterface(XControl::class.java, c.getControl(CONTROL_STATUS_LABEL)).getModel())
         statusModel.setPropertyValue("MultiLine", true)
         updateUI(c)
     }
 
     private fun toggle() {
         val c = container ?: return
-        val port = text(c, "txtPort").getText().trim()
-        if (port.isNotEmpty()) System.setProperty("librekollab.port", port)
-        if (LibreKollabPlugin.isRunning()) LibreKollabPlugin.close()
-        else LibreKollabPlugin.start()
+        savePort()
+        if (LibreKollabPlugin.isRunning()) {
+            LibreKollabPlugin.close()
+        } else {
+            LibreKollabPlugin.start()
+        }
         updateUI(c)
     }
 
     private fun savePort() {
-        val port = text(container ?: return, "txtPort").getText().trim()
-        if (port.isNotEmpty()) System.setProperty("librekollab.port", port)
+        val port = text(container ?: return, CONTROL_PORT_TEXT).getText().trim()
+        if (port.isNotEmpty()) {
+            System.setProperty(LibreKollabPlugin.PORT_PROPERTY, port)
+        }
     }
 
     private fun updateUI(c: XControlContainer) {
         val isRunning = LibreKollabPlugin.isRunning()
-        label(c, "lblStatus").setText(
-            if (isRunning) "Status:\nserver is running on port ${currentPort()}"
-            else "Status:\nserver is stopped"
-        )
-        text(c, "txtPort").setText(currentPort())
-        button(c, "btnToggle").setLabel(if (isRunning) "Stop server" else "Start server")
+        val statusText: String
+        if (isRunning) {
+            statusText = "Status:\nserver is running on port ${currentPort()}"
+        } else {
+            statusText = "Status:\nserver is stopped"
+        }
+        val toggleLabel: String
+        if (isRunning) {
+            toggleLabel = "Stop server"
+        } else {
+            toggleLabel = "Start server"
+        }
+        label(c, CONTROL_STATUS_LABEL).setText(statusText)
+        text(c, CONTROL_PORT_TEXT).setText(currentPort())
+        button(c, CONTROL_TOGGLE_BUTTON).setLabel(toggleLabel)
     }
 
     private fun openLogFile() {
         val logDir = LogDirResolver().getPropertyValue()
         val logFile = File(logDir, "librekollab.log")
-        val target = if (logFile.exists()) logFile else File(logDir).also { it.mkdirs() }
-        if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(target)
+        val target: File
+        if (logFile.exists()) {
+            target = logFile
+        } else {
+            target = File(logDir).also { it.mkdirs() }
+        }
+        if (Desktop.isDesktopSupported()) {
+            Desktop.getDesktop().open(target)
+        }
     }
 
-    private fun currentPort() = System.getProperty("librekollab.port", "8080")
+    private fun currentPort() = System.getProperty(LibreKollabPlugin.PORT_PROPERTY, LibreKollabPlugin.DEFAULT_PORT.toString())
     private fun label(c: XControlContainer, id: String) = UnoRuntime.queryInterface(XFixedText::class.java, c.getControl(id))
     private fun text(c: XControlContainer, id: String) = UnoRuntime.queryInterface(XTextComponent::class.java, c.getControl(id))
     private fun button(c: XControlContainer, id: String) = UnoRuntime.queryInterface(XButton::class.java, c.getControl(id))
-
-    override fun getImplementationName(): String = IMPLEMENTATION_NAME
-    override fun supportsService(name: String): Boolean = name == SERVICE_NAME
-    override fun getSupportedServiceNames(): Array<String> = arrayOf(SERVICE_NAME)
-
-    companion object {
-        const val SERVICE_NAME = "org.msc.librekollab.OptionsHandler"
-        const val IMPLEMENTATION_NAME = "org.msc.librekollab.adapter.libreoffice.plugin.OptionsHandler"
-        private val log = LoggerFactory.getLogger(OptionsHandler::class.java)
-
-        @JvmStatic
-        @Suppress("UNCHECKED_CAST")
-        fun __getComponentFactory(implementationName: String): XSingleComponentFactory? =
-            if (implementationName == IMPLEMENTATION_NAME)
-                FactoryHelper.createComponentFactory(OptionsHandler::class.java, IMPLEMENTATION_NAME) as XSingleComponentFactory
-            else null
-    }
 }

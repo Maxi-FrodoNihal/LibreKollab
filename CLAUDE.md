@@ -29,6 +29,7 @@ org.msc.librekollab
 │           └── properties/
 └── adapter/
     ├── mcp/            # McpServer
+    │   └── request/    # per-tool @Serializable request DTOs, decoded from the MCP call's JsonObject args
     ├── libreoffice/    # CoreKollab (abstract), LibreKollab (in-process, production)
     │   └── plugin/     # LibreKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
     └── logging/        # LoggingKollabAPI, LogDirResolver

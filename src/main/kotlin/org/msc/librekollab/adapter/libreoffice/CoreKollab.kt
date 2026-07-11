@@ -4,6 +4,7 @@ import com.sun.star.awt.FontSlant
 import com.sun.star.awt.Size
 import com.sun.star.beans.PropertyValue
 import com.sun.star.beans.XPropertySet
+import com.sun.star.container.XEnumeration
 import com.sun.star.container.XEnumerationAccess
 import com.sun.star.document.XExporter
 import com.sun.star.document.XFilter
@@ -23,7 +24,9 @@ import com.sun.star.text.XTextDocument
 import com.sun.star.text.XTextFieldsSupplier
 import com.sun.star.text.XTextRange
 import com.sun.star.text.XTextRangeCompare
+import com.sun.star.text.XTextViewCursor
 import com.sun.star.text.XTextViewCursorSupplier
+import com.sun.star.uno.Exception as UnoException
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
 import com.sun.star.util.DateTime
@@ -54,101 +57,103 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
     private val log = LoggerFactory.getLogger(CoreKollab::class.java)
     protected val libreOfficeDispatcher = Dispatchers.IO.limitedParallelism(1)
 
+    private data class ActiveRedline(
+        val action: ChangeAction,
+        val author: String,
+        val dateTime: LocalDateTime,
+        val start: Int,
+        val text: String = ""
+    )
+
+    private data class RedlineScan(
+        val charOffset: Int = 0,
+        val active: ActiveRedline? = null,
+        val changes: List<Change> = emptyList()
+    )
+
+    private data class MarkedTextScan(
+        val offset: Int = 0,
+        val inDelete: Boolean = false,
+        val inInsert: Boolean = false,
+        val text: String = "",
+        val properties: List<TextProperty> = emptyList()
+    )
+
+    private data class FormattingRun(val text: String, val properties: Set<KClass<out TextProperty>>)
+
+    companion object {
+        private const val ANNOTATION_SERVICE = "com.sun.star.text.TextField.Annotation"
+
+        private const val OUTLINE_LEVEL_PROPERTY = "OutlineLevel"
+
+        private const val TEXT_PORTION_TYPE_PROPERTY = "TextPortionType"
+        private const val PORTION_TYPE_REDLINE = "Redline"
+        private const val PORTION_TYPE_TEXT = "Text"
+
+        private const val IS_START_PROPERTY = "IsStart"
+        private const val REDLINE_TYPE_PROPERTY = "RedlineType"
+        private const val REDLINE_TYPE_INSERT = "Insert"
+        private const val REDLINE_TYPE_DELETE = "Delete"
+        private const val REDLINE_AUTHOR_PROPERTY = "RedlineAuthor"
+        private const val REDLINE_DATE_TIME_PROPERTY = "RedlineDateTime"
+
+        private const val RECORD_CHANGES_PROPERTY = "RecordChanges"
+
+        private const val AUTHOR_PROPERTY = "Author"
+        private const val CONTENT_PROPERTY = "Content"
+        private const val DATE_TIME_VALUE_PROPERTY = "DateTimeValue"
+
+        private const val SIZE_PROPERTY = "Size"
+        private const val PIPE_SERVICE = "com.sun.star.io.Pipe"
+        private const val PIPE_CHUNK_SIZE = 65536
+        private const val GRAPHIC_EXPORT_FILTER_SERVICE = "com.sun.star.drawing.GraphicExportFilter"
+        private const val OUTPUT_STREAM_PROPERTY = "OutputStream"
+        private const val MEDIA_TYPE_PROPERTY = "MediaType"
+        private const val PNG_MEDIA_TYPE = "image/png"
+
+        private const val CHAR_WEIGHT_PROPERTY = "CharWeight"
+        private const val CHAR_POSTURE_PROPERTY = "CharPosture"
+        private const val CHAR_UNDERLINE_PROPERTY = "CharUnderline"
+        private const val CHAR_STRIKEOUT_PROPERTY = "CharStrikeout"
+        private const val BOLD_CHAR_WEIGHT = 150f
+        private const val NORMAL_CHAR_WEIGHT = 100f
+    }
+
     abstract override suspend fun listDocuments(): List<String>
     protected abstract suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
     protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
 
-    protected fun XPropertySet.outlineLevel(): Int =
-        when (val v = getPropertyValue("OutlineLevel")) {
+    protected fun outlineLevel(props: XPropertySet): Int {
+        return when (val v = props.getPropertyValue(OUTLINE_LEVEL_PROPERTY)) {
             is Int -> v
             is Short -> v.toInt()
             else -> 0
         }
+    }
+
+    protected fun enumerationSequence(enumeration: XEnumeration): Sequence<Any> =
+        generateSequence { if (enumeration.hasMoreElements()) enumeration.nextElement() else null }
 
     override suspend fun getText(documentId: String, changeStatus: ChangeStatus): MarkedText =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
-                val sb = StringBuilder()
-                val properties = mutableListOf<TextProperty>()
                 val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                     .createEnumeration()
-                var paraIdx = 0
-                while (paragraphs.hasMoreElements()) {
-                    if (paraIdx > 0) sb.append("\n")
-                    val (text, props) = extractParagraphMarkedText(paragraphs.nextElement(), changeStatus, paraIdx)
-                    sb.append(text)
-                    properties.addAll(props)
-                    paraIdx++
-                }
-                MarkedText(sb.toString(), properties)
+                val results = enumerationSequence(paragraphs)
+                    .mapIndexed { idx, para -> extractParagraphMarkedText(para, changeStatus, idx) }
+                    .toList()
+                MarkedText(results.joinToString("\n") { it.first }, results.flatMap { it.second })
             }
         }
 
     override suspend fun getChanges(documentId: String): List<Change> =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
-                val changes = mutableListOf<Change>()
                 val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                     .createEnumeration()
-                var paragraphIdx = 0
-                while (paragraphs.hasMoreElements()) {
-                    val para = paragraphs.nextElement()
-                    val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)
-                        ?.createEnumeration() ?: continue
-                    var charOffset = 0
-                    var redlineAction: ChangeAction? = null
-                    var redlineAuthor = ""
-                    var redlineDateTime: LocalDateTime? = null
-                    var redlineText = StringBuilder()
-                    var redlineStart = 0
-                    while (portions.hasMoreElements()) {
-                        val portion = portions.nextElement()
-                        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion)
-                        val portionType = propSet.getPropertyValue("TextPortionType") as? String
-                        when (portionType) {
-                            "Redline" -> {
-                                val isStart = propSet.getPropertyValue("IsStart") as? Boolean ?: false
-                                if (isStart) {
-                                    val action = when (propSet.getPropertyValue("RedlineType") as? String) {
-                                        "Insert" -> ChangeAction.INSERT
-                                        "Delete" -> ChangeAction.DELETE
-                                        else -> null
-                                    }
-                                    if (action != null) {
-                                        redlineAction = action
-                                        redlineAuthor = propSet.getPropertyValue("RedlineAuthor") as? String ?: ""
-                                        val dt = propSet.getPropertyValue("RedlineDateTime") as? DateTime
-                                        redlineDateTime = dt?.let {
-                                            LocalDateTime(it.Year.toInt(), it.Month.toInt(), it.Day.toInt(),
-                                                it.Hours.toInt(), it.Minutes.toInt(), it.Seconds.toInt())
-                                        }
-                                        redlineText = StringBuilder()
-                                        redlineStart = charOffset
-                                    }
-                                } else {
-                                    val text = redlineText.toString()
-                                    if (redlineAction != null && redlineDateTime != null && text.isNotEmpty()) {
-                                        changes.add(Change(
-                                            action = redlineAction,
-                                            author = redlineAuthor,
-                                            dateTime = redlineDateTime,
-                                            text = text,
-                                            anchor = TextAnchor(text, paragraphIdx, redlineStart, redlineStart + text.length)
-                                        ))
-                                    }
-                                    redlineAction = null
-                                }
-                            }
-                            "Text" -> {
-                                val text = UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: ""
-                                if (redlineAction != null) redlineText.append(text)
-                                charOffset += text.length
-                            }
-                        }
-                    }
-                    paragraphIdx++
-                }
-                changes
+                enumerationSequence(paragraphs)
+                    .flatMapIndexed { paragraphIdx, para -> changesInParagraph(para, paragraphIdx) }
+                    .toList()
             }
         }
 
@@ -169,8 +174,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
 
     override suspend fun getPageCount(documentId: String): Int = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
-            val model = UnoRuntime.queryInterface(XModel::class.java, textDoc)
-            val vc = UnoRuntime.queryInterface(XTextViewCursorSupplier::class.java, model.currentController).viewCursor
+            val vc = viewCursorOf(textDoc)
             vc.gotoEnd(false)
             UnoRuntime.queryInterface(XPageCursor::class.java, vc).page.toInt()
         }
@@ -178,48 +182,32 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
 
     override suspend fun getChapters(documentId: String): List<String> = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
-            val chapters = mutableListOf<String>()
             val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                 .createEnumeration()
-            while (paragraphs.hasMoreElements()) {
-                val element = paragraphs.nextElement()
-                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, element)
-                if (propSet.outlineLevel() > 0) {
-                    chapters.add(UnoRuntime.queryInterface(XTextRange::class.java, element).string)
-                }
-            }
-            chapters
+            enumerationSequence(paragraphs)
+                .filter { outlineLevel(UnoRuntime.queryInterface(XPropertySet::class.java, it)) > 0 }
+                .map { UnoRuntime.queryInterface(XTextRange::class.java, it).string }
+                .toList()
         }
     }
 
     override suspend fun getTextByPages(documentId: String, fromPage: Int, toPage: Int, changeStatus: ChangeStatus): MarkedText =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
-                val pc = pageCursorOf(textDoc)
-                val vc = UnoRuntime.queryInterface(
-                    XTextViewCursorSupplier::class.java,
-                    UnoRuntime.queryInterface(XModel::class.java, textDoc).currentController
-                ).viewCursor
-
-                val sb = StringBuilder()
-                val properties = mutableListOf<TextProperty>()
+                val vc = viewCursorOf(textDoc)
+                val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
                 val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
                     .createEnumeration()
-                var paraIdx = 0
-                while (paragraphs.hasMoreElements()) {
-                    val element = paragraphs.nextElement()
-                    val textRange = UnoRuntime.queryInterface(XTextRange::class.java, element)
-                    vc.gotoRange(textRange.start, false)
-                    val pageNum = pc.page.toInt()
-                    if (pageNum in fromPage..toPage) {
-                        val (text, props) = extractParagraphMarkedText(element, changeStatus, paraIdx)
-                        sb.append(text).append("\n")
-                        properties.addAll(props)
+                val results = enumerationSequence(paragraphs)
+                    .mapIndexed { idx, element ->
+                        vc.gotoRange(UnoRuntime.queryInterface(XTextRange::class.java, element).start, false)
+                        Triple(idx, element, pc.page.toInt())
                     }
-                    if (pageNum > toPage) break
-                    paraIdx++
-                }
-                MarkedText(sb.toString().trimEnd(), properties)
+                    .takeWhile { (_, _, pageNum) -> pageNum <= toPage }
+                    .filter { (_, _, pageNum) -> pageNum in fromPage..toPage }
+                    .map { (idx, element, _) -> extractParagraphMarkedText(element, changeStatus, idx) }
+                    .toList()
+                MarkedText(results.joinToString("\n") { it.first }, results.flatMap { it.second })
             }
         }
 
@@ -237,13 +225,15 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
                     val element = paragraphs.nextElement()
                     val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, element)
                     val textRange = UnoRuntime.queryInterface(XTextRange::class.java, element)
-                    val outlineLevel = propSet.outlineLevel()
+                    val paraOutlineLevel = outlineLevel(propSet)
                     val paraText = textRange.string
-                    if (outlineLevel > 0) {
-                        if (inChapter && outlineLevel <= chapterLevel) break
+                    if (paraOutlineLevel > 0) {
+                        if (inChapter && paraOutlineLevel <= chapterLevel) {
+                            break
+                        }
                         if (paraText.trim() == chapter.trim()) {
                             inChapter = true
-                            chapterLevel = outlineLevel
+                            chapterLevel = paraOutlineLevel
                         }
                     } else if (inChapter && paraText.isNotBlank()) {
                         val (text, props) = extractParagraphMarkedText(element, changeStatus, paraIdx)
@@ -259,39 +249,23 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
     override suspend fun setEditMode(documentId: String, editMode: Boolean): Unit = withContext(libreOfficeDispatcher) {
         withDocumentMutating(documentId) { textDoc ->
             UnoRuntime.queryInterface(XPropertySet::class.java, textDoc)
-                .setPropertyValue("RecordChanges", editMode)
+                .setPropertyValue(RECORD_CHANGES_PROPERTY, editMode)
         }
     }
 
     override suspend fun getEditMode(documentId: String): Boolean = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
             UnoRuntime.queryInterface(XPropertySet::class.java, textDoc)
-                .getPropertyValue("RecordChanges") as Boolean
+                .getPropertyValue(RECORD_CHANGES_PROPERTY) as Boolean
         }
     }
 
     override suspend fun getComments(documentId: String): List<Comment> = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
-            val fieldSupplier = UnoRuntime.queryInterface(XTextFieldsSupplier::class.java, textDoc)
-            val fieldEnum = fieldSupplier.textFields.createEnumeration()
-            val comments = mutableListOf<Comment>()
-            while (fieldEnum.hasMoreElements()) {
-                val field = fieldEnum.nextElement()
-                val serviceInfo = UnoRuntime.queryInterface(XServiceInfo::class.java, field)
-                if (!serviceInfo.supportsService("com.sun.star.text.TextField.Annotation")) continue
-                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, field)
-                val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-                val anchor = buildTextAnchor(textDoc, anchorRange)
-                val author = propSet.getPropertyValue("Author") as String
-                val content = propSet.getPropertyValue("Content") as String
-                val dt = propSet.getPropertyValue("DateTimeValue") as DateTime
-                val dateTime = LocalDateTime(
-                    dt.Year.toInt(), dt.Month.toInt(), dt.Day.toInt(),
-                    dt.Hours.toInt(), dt.Minutes.toInt(), dt.Seconds.toInt()
-                )
-                comments.add(Comment(anchor, author, content, dateTime))
-            }
-            comments.sortedWith(compareBy({ it.anchor.paragraphIndex }, { it.anchor.charStart }))
+            commentFields(textDoc)
+                .map { field -> commentOf(textDoc, field) }
+                .toList()
+                .sortedWith(compareBy({ it.anchor.paragraphIndex }, { it.anchor.charStart }))
         }
     }
 
@@ -301,48 +275,20 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
     override suspend fun updateComment(documentId: String, commentId: String, newText: String): Unit =
         withContext(libreOfficeDispatcher) {
             withDocumentMutating(documentId) { textDoc ->
-                val fieldSupplier = UnoRuntime.queryInterface(XTextFieldsSupplier::class.java, textDoc)
-                val fieldEnum = fieldSupplier.textFields.createEnumeration()
-                while (fieldEnum.hasMoreElements()) {
-                    val field = fieldEnum.nextElement()
-                    val serviceInfo = UnoRuntime.queryInterface(XServiceInfo::class.java, field)
-                    if (!serviceInfo.supportsService("com.sun.star.text.TextField.Annotation")) continue
-                    val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-                    if (buildTextAnchor(textDoc, anchorRange).id == commentId) {
-                        val now = java.time.LocalDateTime.now()
-                        UnoRuntime.queryInterface(XPropertySet::class.java, field).apply {
-                            setPropertyValue("Content", newText)
-                            setPropertyValue("DateTimeValue", DateTime().apply {
-                                Year = now.year.toShort()
-                                Month = now.monthValue.toShort()
-                                Day = now.dayOfMonth.toShort()
-                                Hours = now.hour.toShort()
-                                Minutes = now.minute.toShort()
-                                Seconds = now.second.toShort()
-                            })
-                        }
-                        return@withDocumentMutating
-                    }
+                val field = findCommentField(textDoc, commentId)
+                    ?: throw NoSuchElementException("Comment $commentId not found in document $documentId")
+                UnoRuntime.queryInterface(XPropertySet::class.java, field).apply {
+                    setPropertyValue(CONTENT_PROPERTY, newText)
+                    setPropertyValue(DATE_TIME_VALUE_PROPERTY, unoDateTimeNow())
                 }
-                throw NoSuchElementException("Comment $commentId not found in document $documentId")
             }
         }
 
     override suspend fun deleteComment(documentId: String, commentId: String): Unit =
         withContext(libreOfficeDispatcher) {
             withDocumentMutating(documentId) { textDoc ->
-                val fieldSupplier = UnoRuntime.queryInterface(XTextFieldsSupplier::class.java, textDoc)
-                val fieldEnum = fieldSupplier.textFields.createEnumeration()
-                while (fieldEnum.hasMoreElements()) {
-                    val field = fieldEnum.nextElement()
-                    val serviceInfo = UnoRuntime.queryInterface(XServiceInfo::class.java, field)
-                    if (!serviceInfo.supportsService("com.sun.star.text.TextField.Annotation")) continue
-                    val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-                    if (buildTextAnchor(textDoc, anchorRange).id == commentId) {
-                        textDoc.text.removeTextContent(UnoRuntime.queryInterface(XTextContent::class.java, field))
-                        break
-                    }
-                }
+                val field = findCommentField(textDoc, commentId) ?: return@withDocumentMutating
+                textDoc.text.removeTextContent(UnoRuntime.queryInterface(XTextContent::class.java, field))
             }
         }
 
@@ -351,19 +297,11 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
             withDocumentMutating(documentId) { textDoc ->
                 val anchorRange = resolveAnchorRange(textDoc, anchor)
                 val serviceFactory = UnoRuntime.queryInterface(XMultiServiceFactory::class.java, textDoc)
-                val annotationField = serviceFactory.createInstance("com.sun.star.text.TextField.Annotation")
-                val now = java.time.LocalDateTime.now()
+                val annotationField = serviceFactory.createInstance(ANNOTATION_SERVICE)
                 UnoRuntime.queryInterface(XPropertySet::class.java, annotationField).apply {
-                    setPropertyValue("Content", commentText)
-                    setPropertyValue("Author", author)
-                    setPropertyValue("DateTimeValue", DateTime().apply {
-                        Year = now.year.toShort()
-                        Month = now.monthValue.toShort()
-                        Day = now.dayOfMonth.toShort()
-                        Hours = now.hour.toShort()
-                        Minutes = now.minute.toShort()
-                        Seconds = now.second.toShort()
-                    })
+                    setPropertyValue(CONTENT_PROPERTY, commentText)
+                    setPropertyValue(AUTHOR_PROPERTY, author)
+                    setPropertyValue(DATE_TIME_VALUE_PROPERTY, unoDateTimeNow())
                 }
                 textDoc.text.insertTextContent(
                     anchorRange,
@@ -374,36 +312,47 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         }
     }
 
+    override suspend fun getImageMetas(documentId: String): List<ImageMeta> = withContext(libreOfficeDispatcher) {
+        withDocument(documentId) { textDoc ->
+            val vc = viewCursorOf(textDoc)
+            val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
+            getGraphicShapes(textDoc).map { shape ->
+                val image = imageOf(textDoc, shape)
+                vc.gotoRange(shapeAnchorRange(shape).start, false)
+                val page = pc.page.toInt()
+                val sizeMb = image.bytes.size / (1024.0 * 1024.0)
+                ImageMeta(image.id, image.width, image.height, sizeMb, page, image.textAnchor)
+            }
+        }
+    }
+
+    override suspend fun getImage(documentId: String, imageId: String): Image? = withContext(libreOfficeDispatcher) {
+        withDocument(documentId) { textDoc ->
+            getGraphicShapes(textDoc).asSequence().map { shape -> imageOf(textDoc, shape) }.firstOrNull { it.id == imageId }
+        }
+    }
+
     protected suspend fun withEnsuredEditMode(documentId: String, block: suspend () -> Unit) {
         if (!getEditMode(documentId)) setEditMode(documentId, true)
         block()
     }
 
     protected fun resolveAnchorRange(textDoc: XTextDocument, anchor: TextAnchor): XTextRange {
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
-            .createEnumeration()
-        var idx = 0
-        while (paragraphs.hasMoreElements()) {
-            val para = paragraphs.nextElement()
-            if (idx == anchor.paragraphIndex) {
-                val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, para).start
-                val cursor = textDoc.text.createTextCursorByRange(paraStart)
-                cursor.goRight(anchor.charStart.toShort(), false)
-                cursor.goRight((anchor.charEnd - anchor.charStart).toShort(), true)
-                return cursor
-            }
-            idx++
-        }
-        throw IllegalArgumentException("Paragraph index ${anchor.paragraphIndex} not found in document")
+        val para = paragraphAt(textDoc, anchor.paragraphIndex)
+        val paraStart = UnoRuntime.queryInterface(XTextRange::class.java, para).start
+        val cursor = textDoc.text.createTextCursorByRange(paraStart)
+        cursor.goRight(anchor.charStart.toShort(), false)
+        cursor.goRight((anchor.charEnd - anchor.charStart).toShort(), true)
+        return cursor
     }
 
     protected fun buildTextAnchor(textDoc: XTextDocument, anchorRange: XTextRange): TextAnchor {
         val compare = UnoRuntime.queryInterface(XTextRangeCompare::class.java, textDoc.text)
-        val paragraphList = mutableListOf<XTextRange>()
         val paraEnum = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
             .createEnumeration()
-        while (paraEnum.hasMoreElements())
-            paragraphList.add(UnoRuntime.queryInterface(XTextRange::class.java, paraEnum.nextElement()))
+        val paragraphList = enumerationSequence(paraEnum)
+            .map { UnoRuntime.queryInterface(XTextRange::class.java, it) }
+            .toList()
 
         val paragraphIndex = paragraphList.indexOfLast { para ->
             compare.compareRegionStarts(anchorRange.start, para.start) <= 0
@@ -417,100 +366,182 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         return TextAnchor(anchorRange.string, paragraphIndex, charStart, charStart + anchorRange.string.length)
     }
 
-    private fun pageCursorOf(textDoc: XTextDocument): XPageCursor {
+    private fun commentFields(textDoc: XTextDocument): Sequence<Any> {
+        val fieldSupplier = UnoRuntime.queryInterface(XTextFieldsSupplier::class.java, textDoc)
+        return enumerationSequence(fieldSupplier.textFields.createEnumeration())
+            .filter { UnoRuntime.queryInterface(XServiceInfo::class.java, it).supportsService(ANNOTATION_SERVICE) }
+    }
+
+    private fun findCommentField(textDoc: XTextDocument, commentId: String): Any? =
+        commentFields(textDoc).firstOrNull { field ->
+            val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
+            buildTextAnchor(textDoc, anchorRange).id == commentId
+        }
+
+    private fun commentOf(textDoc: XTextDocument, field: Any): Comment {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, field)
+        val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
+        val anchor = buildTextAnchor(textDoc, anchorRange)
+        val author = propSet.getPropertyValue(AUTHOR_PROPERTY) as String
+        val content = propSet.getPropertyValue(CONTENT_PROPERTY) as String
+        val dateTime = localDateTimeOf(propSet.getPropertyValue(DATE_TIME_VALUE_PROPERTY) as DateTime)
+        return Comment(anchor, author, content, dateTime)
+    }
+
+    private fun localDateTimeOf(dt: DateTime): LocalDateTime = LocalDateTime(
+        dt.Year.toInt(), dt.Month.toInt(), dt.Day.toInt(),
+        dt.Hours.toInt(), dt.Minutes.toInt(), dt.Seconds.toInt()
+    )
+
+    private fun unoDateTimeNow(): DateTime {
+        val now = java.time.LocalDateTime.now()
+        return DateTime().apply {
+            Year = now.year.toShort()
+            Month = now.monthValue.toShort()
+            Day = now.dayOfMonth.toShort()
+            Hours = now.hour.toShort()
+            Minutes = now.minute.toShort()
+            Seconds = now.second.toShort()
+        }
+    }
+
+    private fun viewCursorOf(textDoc: XTextDocument): XTextViewCursor {
         val model = UnoRuntime.queryInterface(XModel::class.java, textDoc)
-        val vcSupplier = UnoRuntime.queryInterface(
-            XTextViewCursorSupplier::class.java,
-            model.currentController
+        val vcSupplier = UnoRuntime.queryInterface(XTextViewCursorSupplier::class.java, model.currentController)
+        return vcSupplier.viewCursor
+    }
+
+    private fun pageCursorOf(textDoc: XTextDocument): XPageCursor =
+        UnoRuntime.queryInterface(XPageCursor::class.java, viewCursorOf(textDoc))
+
+    private fun paragraphAt(textDoc: XTextDocument, index: Int): Any {
+        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+        return enumerationSequence(paragraphs).elementAtOrNull(index)
+            ?: throw IllegalArgumentException("Paragraph index $index not found in document")
+    }
+
+    private fun changesInParagraph(para: Any, paragraphIdx: Int): List<Change> {
+        val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)?.createEnumeration()
+            ?: return emptyList()
+        return enumerationSequence(portions)
+            .fold(RedlineScan()) { state, portion -> scanRedlinePortion(state, portion, paragraphIdx) }
+            .changes
+    }
+
+    private fun scanRedlinePortion(state: RedlineScan, portion: Any, paragraphIdx: Int): RedlineScan {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion)
+        return when (propSet.getPropertyValue(TEXT_PORTION_TYPE_PROPERTY) as? String) {
+            PORTION_TYPE_REDLINE -> scanRedlineBracket(state, propSet, paragraphIdx)
+            PORTION_TYPE_TEXT -> scanRedlineText(state, portion)
+            else -> state
+        }
+    }
+
+    private fun scanRedlineBracket(state: RedlineScan, propSet: XPropertySet, paragraphIdx: Int): RedlineScan {
+        val isStart = propSet.getPropertyValue(IS_START_PROPERTY) as? Boolean ?: false
+        if (isStart) {
+            return startRedline(state, propSet)
+        }
+        return endRedline(state, paragraphIdx)
+    }
+
+    private fun startRedline(state: RedlineScan, propSet: XPropertySet): RedlineScan {
+        val action = redlineActionOf(propSet.getPropertyValue(REDLINE_TYPE_PROPERTY) as? String) ?: return state
+        val dateTime = (propSet.getPropertyValue(REDLINE_DATE_TIME_PROPERTY) as? DateTime)?.let { localDateTimeOf(it) } ?: return state
+        val author = propSet.getPropertyValue(REDLINE_AUTHOR_PROPERTY) as? String ?: ""
+        return state.copy(active = ActiveRedline(action, author, dateTime, state.charOffset))
+    }
+
+    private fun redlineActionOf(redlineType: String?): ChangeAction? {
+        return when (redlineType) {
+            REDLINE_TYPE_INSERT -> ChangeAction.INSERT
+            REDLINE_TYPE_DELETE -> ChangeAction.DELETE
+            else -> null
+        }
+    }
+
+    private fun endRedline(state: RedlineScan, paragraphIdx: Int): RedlineScan {
+        val active = state.active ?: return state
+        if (active.text.isEmpty()) {
+            return state.copy(active = null)
+        }
+        val change = Change(
+            action = active.action,
+            author = active.author,
+            dateTime = active.dateTime,
+            text = active.text,
+            anchor = TextAnchor(active.text, paragraphIdx, active.start, active.start + active.text.length)
         )
-        return UnoRuntime.queryInterface(XPageCursor::class.java, vcSupplier.viewCursor)
+        return state.copy(active = null, changes = state.changes + change)
+    }
+
+    private fun scanRedlineText(state: RedlineScan, portion: Any): RedlineScan {
+        val text = UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: ""
+        val active = state.active?.let { it.copy(text = it.text + text) }
+        return state.copy(charOffset = state.charOffset + text.length, active = active)
     }
 
     private fun extractParagraphMarkedText(para: Any, changeStatus: ChangeStatus, paragraphIndex: Int): Pair<String, List<TextProperty>> {
-        val sb = StringBuilder()
-        val properties = mutableListOf<TextProperty>()
-        var offset = 0
-        var inDelete = false
-        var inInsert = false
-        val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)
-            ?.createEnumeration() ?: return Pair("", emptyList())
-        while (portions.hasMoreElements()) {
-            val portion = portions.nextElement()
-            val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion) ?: continue
-            when (propSet.getPropertyValue("TextPortionType") as? String) {
-                "Redline" -> {
-                    val isStart = propSet.getPropertyValue("IsStart") as? Boolean ?: false
-                    when (propSet.getPropertyValue("RedlineType") as? String) {
-                        "Delete" -> inDelete = isStart
-                        "Insert" -> inInsert = isStart
-                    }
-                }
-                "Text" -> {
-                    val include = when (changeStatus) {
-                        ChangeStatus.BEFORE -> !inInsert
-                        ChangeStatus.AFTER  -> !inDelete
-                        ChangeStatus.FUSION -> true
-                    }
-                    if (include) {
-                        val text = UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: ""
-                        if (text.isNotEmpty()) {
-                            val idx = MarkIndex(paragraphIndex, offset, offset + text.length)
-                            collectFormatting(propSet, idx, properties)
-                            sb.append(text)
-                            offset += text.length
-                        }
-                    }
-                }
-            }
-        }
-        return Pair(sb.toString(), properties)
+        val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)?.createEnumeration()
+            ?: return Pair("", emptyList())
+        val result = enumerationSequence(portions)
+            .fold(MarkedTextScan()) { state, portion -> scanMarkedTextPortion(state, portion, changeStatus, paragraphIndex) }
+        return Pair(result.text, result.properties)
     }
 
-    private fun collectFormatting(propSet: XPropertySet, idx: MarkIndex, properties: MutableList<TextProperty>) {
-        val charWeight = try { propSet.getPropertyValue("CharWeight") as? Float } catch (e: Exception) { null }
-        if (charWeight != null && charWeight >= 150f) properties.add(BoldProperty(idx))
-
-        val charPosture = try { propSet.getPropertyValue("CharPosture") as? FontSlant } catch (e: Exception) { null }
-        if (charPosture != null && charPosture != FontSlant.NONE && charPosture != FontSlant.DONTKNOW) properties.add(ItalicProperty(idx))
-
-        val charUnderline = try { (propSet.getPropertyValue("CharUnderline") as? Number)?.toInt() } catch (e: Exception) { null }
-        if (charUnderline != null && charUnderline != 0) properties.add(UnderlineProperty(idx))
-
-        val charStrikeout = try { (propSet.getPropertyValue("CharStrikeout") as? Number)?.toInt() } catch (e: Exception) { null }
-        if (charStrikeout != null && charStrikeout != 0) properties.add(StrikethroughProperty(idx))
-    }
-
-    override suspend fun getImageMetas(documentId: String): List<ImageMeta> = withContext(libreOfficeDispatcher) {
-        withDocument(documentId) { textDoc ->
-            val model = UnoRuntime.queryInterface(XModel::class.java, textDoc)
-            val vc = UnoRuntime.queryInterface(XTextViewCursorSupplier::class.java, model.currentController).viewCursor
-            val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
-            getGraphicShapes(textDoc).map { shape ->
-                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, shape)
-                val size = propSet.getPropertyValue("Size") as Size
-                val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
-                val anchor = buildTextAnchor(textDoc, anchorRange)
-                vc.gotoRange(anchorRange.start, false)
-                val page = pc.page.toInt()
-                val bytes = exportShapePng(shape)
-                val image = Image(bytes, size.Width, size.Height, anchor)
-                val sizeMb = bytes.size / (1024.0 * 1024.0)
-                ImageMeta(image.id, size.Width, size.Height, sizeMb, page, anchor)
-            }
+    private fun scanMarkedTextPortion(state: MarkedTextScan, portion: Any, changeStatus: ChangeStatus, paragraphIndex: Int): MarkedTextScan {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, portion) ?: return state
+        return when (propSet.getPropertyValue(TEXT_PORTION_TYPE_PROPERTY) as? String) {
+            PORTION_TYPE_REDLINE -> scanRedlineFlag(state, propSet)
+            PORTION_TYPE_TEXT -> scanMarkedText(state, propSet, portion, changeStatus, paragraphIndex)
+            else -> state
         }
     }
 
-    override suspend fun getImage(documentId: String, imageId: String): Image? = withContext(libreOfficeDispatcher) {
-        withDocument(documentId) { textDoc ->
-            getGraphicShapes(textDoc).firstNotNullOfOrNull { shape ->
-                val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, shape)
-                val size = propSet.getPropertyValue("Size") as Size
-                val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
-                val anchor = buildTextAnchor(textDoc, anchorRange)
-                val bytes = exportShapePng(shape)
-                Image(bytes, size.Width, size.Height, anchor).takeIf { it.id == imageId }
-            }
+    private fun scanRedlineFlag(state: MarkedTextScan, propSet: XPropertySet): MarkedTextScan {
+        val isStart = propSet.getPropertyValue(IS_START_PROPERTY) as? Boolean ?: false
+        return when (propSet.getPropertyValue(REDLINE_TYPE_PROPERTY) as? String) {
+            REDLINE_TYPE_DELETE -> state.copy(inDelete = isStart)
+            REDLINE_TYPE_INSERT -> state.copy(inInsert = isStart)
+            else -> state
         }
+    }
+
+    private fun scanMarkedText(
+        state: MarkedTextScan,
+        propSet: XPropertySet,
+        portion: Any,
+        changeStatus: ChangeStatus,
+        paragraphIndex: Int
+    ): MarkedTextScan {
+        val include = when (changeStatus) {
+            ChangeStatus.BEFORE -> !state.inInsert
+            ChangeStatus.AFTER -> !state.inDelete
+            ChangeStatus.FUSION -> true
+        }
+        if (!include) {
+            return state
+        }
+        val text = UnoRuntime.queryInterface(XTextRange::class.java, portion)?.string ?: ""
+        if (text.isEmpty()) {
+            return state
+        }
+        val idx = MarkIndex(paragraphIndex, state.offset, state.offset + text.length)
+        val properties = state.properties + formattingProperties(propSet, idx)
+        return state.copy(offset = state.offset + text.length, text = state.text + text, properties = properties)
+    }
+
+    private fun formattingProperties(propSet: XPropertySet, idx: MarkIndex): List<TextProperty> {
+        val charWeight = try { propSet.getPropertyValue(CHAR_WEIGHT_PROPERTY) as? Float } catch (e: UnoException) { null }
+        val charPosture = try { propSet.getPropertyValue(CHAR_POSTURE_PROPERTY) as? FontSlant } catch (e: UnoException) { null }
+        val charUnderline = try { (propSet.getPropertyValue(CHAR_UNDERLINE_PROPERTY) as? Number)?.toInt() } catch (e: UnoException) { null }
+        val charStrikeout = try { (propSet.getPropertyValue(CHAR_STRIKEOUT_PROPERTY) as? Number)?.toInt() } catch (e: UnoException) { null }
+        return listOfNotNull(
+            BoldProperty(idx).takeIf { charWeight != null && charWeight >= BOLD_CHAR_WEIGHT },
+            ItalicProperty(idx).takeIf { charPosture != null && charPosture != FontSlant.NONE && charPosture != FontSlant.DONTKNOW },
+            UnderlineProperty(idx).takeIf { charUnderline != null && charUnderline != 0 },
+            StrikethroughProperty(idx).takeIf { charStrikeout != null && charStrikeout != 0 }
+        )
     }
 
     private fun getGraphicShapes(textDoc: XTextDocument): List<Any> {
@@ -520,32 +551,47 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         return nameAccess.elementNames.mapNotNull { nameAccess.getByName(it) }
     }
 
+    private fun shapeAnchorRange(shape: Any): XTextRange =
+        UnoRuntime.queryInterface(XTextContent::class.java, shape).anchor
+
+    private fun imageOf(textDoc: XTextDocument, shape: Any): Image {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, shape)
+        val size = propSet.getPropertyValue(SIZE_PROPERTY) as Size
+        val anchor = buildTextAnchor(textDoc, shapeAnchorRange(shape))
+        val bytes = exportShapePng(shape)
+        return Image(bytes, size.Width, size.Height, anchor)
+    }
+
     private fun exportShapePng(shape: Any): ByteArray {
         val smgr = UnoRuntime.queryInterface(XMultiComponentFactory::class.java, componentContext.serviceManager)
-        val pipeObj = smgr.createInstanceWithContext("com.sun.star.io.Pipe", componentContext)
+        val pipeObj = smgr.createInstanceWithContext(PIPE_SERVICE, componentContext)
         val pipeIn = UnoRuntime.queryInterface(XInputStream::class.java, pipeObj)
         val pipeOut = UnoRuntime.queryInterface(XOutputStream::class.java, pipeObj)
         val exporter = UnoRuntime.queryInterface(
             XExporter::class.java,
-            smgr.createInstanceWithContext("com.sun.star.drawing.GraphicExportFilter", componentContext)
+            smgr.createInstanceWithContext(GRAPHIC_EXPORT_FILTER_SERVICE, componentContext)
         )
         exporter.setSourceDocument(
             UnoRuntime.queryInterface(XComponent::class.java, shape)
                 ?: throw IllegalStateException("Graphic shape does not implement XComponent")
         )
         UnoRuntime.queryInterface(XFilter::class.java, exporter).filter(arrayOf(
-            PropertyValue().apply { Name = "OutputStream"; Value = pipeOut },
-            PropertyValue().apply { Name = "MediaType"; Value = "image/png" }
+            PropertyValue().apply { Name = OUTPUT_STREAM_PROPERTY; Value = pipeOut },
+            PropertyValue().apply { Name = MEDIA_TYPE_PROPERTY; Value = PNG_MEDIA_TYPE }
         ))
         pipeOut.closeOutput()
+        return readAllBytes(pipeIn)
+    }
+
+    private fun readAllBytes(input: XInputStream): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         val holder = Array(1) { ByteArray(0) }
         while (true) {
-            val n = pipeIn.readBytes(holder, 65536)
+            val n = input.readBytes(holder, PIPE_CHUNK_SIZE)
             if (n == 0) break
             out.write(holder[0])
         }
-        pipeIn.closeInput()
+        input.closeInput()
         return out.toByteArray()
     }
 
@@ -554,16 +600,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
     // tracks such a later attribute change as its own "Format" redline, which splits what should be one
     // logical Insert into two — losing the second half when getChanges() reads the portions back.
     private fun insertFormattedText(textDoc: XTextDocument, anchor: TextAnchor, markedText: MarkedText) {
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        var idx = 0
-        var anchorPara: Any? = null
-        while (paragraphs.hasMoreElements()) {
-            val para = paragraphs.nextElement()
-            if (idx == anchor.paragraphIndex) { anchorPara = para; break }
-            idx++
-        }
-        requireNotNull(anchorPara) { "Paragraph index ${anchor.paragraphIndex} not found in document" }
-
+        val anchorPara = paragraphAt(textDoc, anchor.paragraphIndex)
         val cursor = textDoc.text.createTextCursorByRange(UnoRuntime.queryInterface(XTextRange::class.java, anchorPara).start)
         cursor.goRight(anchor.charEnd.toShort(), false)
 
@@ -582,13 +619,11 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
 
     private fun applyRunProperties(cursor: XTextCursor, properties: Set<KClass<out TextProperty>>) {
         val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, cursor)
-        propSet.setPropertyValue("CharWeight", if (BoldProperty::class in properties) 150f else 100f)
-        propSet.setPropertyValue("CharPosture", if (ItalicProperty::class in properties) FontSlant.ITALIC else FontSlant.NONE)
-        propSet.setPropertyValue("CharUnderline", (if (UnderlineProperty::class in properties) 1 else 0).toShort())
-        propSet.setPropertyValue("CharStrikeout", (if (StrikethroughProperty::class in properties) 1 else 0).toShort())
+        propSet.setPropertyValue(CHAR_WEIGHT_PROPERTY, if (BoldProperty::class in properties) BOLD_CHAR_WEIGHT else NORMAL_CHAR_WEIGHT)
+        propSet.setPropertyValue(CHAR_POSTURE_PROPERTY, if (ItalicProperty::class in properties) FontSlant.ITALIC else FontSlant.NONE)
+        propSet.setPropertyValue(CHAR_UNDERLINE_PROPERTY, (if (UnderlineProperty::class in properties) 1 else 0).toShort())
+        propSet.setPropertyValue(CHAR_STRIKEOUT_PROPERTY, (if (StrikethroughProperty::class in properties) 1 else 0).toShort())
     }
-
-    private data class FormattingRun(val text: String, val properties: Set<KClass<out TextProperty>>)
 
     private fun formattingRuns(line: String, lineIdx: Int, properties: List<TextProperty>): List<FormattingRun> {
         if (line.isEmpty()) return emptyList()

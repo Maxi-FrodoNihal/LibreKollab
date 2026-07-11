@@ -19,18 +19,12 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
         instance = this
     }
 
-    override fun execute(arguments: Array<out NamedValue>): Any {
-        log.info("execute() called - plugin ready")
-        return ""
-    }
-
-    override fun getImplementationName(): String = IMPLEMENTATION_NAME
-    override fun supportsService(name: String): Boolean = name == SERVICE_NAME
-    override fun getSupportedServiceNames(): Array<String> = arrayOf(SERVICE_NAME)
-
     companion object {
         const val SERVICE_NAME = "org.msc.librekollab.LibreKollabPlugin"
         const val IMPLEMENTATION_NAME = "org.msc.librekollab.adapter.libreoffice.plugin.LibreKollabPlugin"
+
+        internal const val PORT_PROPERTY = "librekollab.port"
+        internal const val DEFAULT_PORT = 8080
 
         private val log = LoggerFactory.getLogger(LibreKollabPlugin::class.java)
         private val running = AtomicBoolean(false)
@@ -42,7 +36,7 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
         fun start() {
             val inst = instance ?: return
             if (running.compareAndSet(false, true)) {
-                val port = System.getProperty("librekollab.port", "8080").toInt()
+                val port = System.getProperty(PORT_PROPERTY, DEFAULT_PORT.toString()).toInt()
                 log.info("Starting MCP server on port {}", port)
                 val kollab = LoggingKollabAPI(LibreKollab(inst.context))
                 engine = McpServer(kollab).startSse(port)
@@ -59,9 +53,13 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
         }
 
         @JvmStatic
-        @Suppress("UNCHECKED_CAST")
         fun __getComponentFactory(implementationName: String): XSingleComponentFactory? {
             log.info("__getComponentFactory called with: {}", implementationName)
+            return componentFactoryFor(implementationName)
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        private fun componentFactoryFor(implementationName: String): XSingleComponentFactory? {
             return when (implementationName) {
                 IMPLEMENTATION_NAME ->
                     FactoryHelper.createComponentFactory(LibreKollabPlugin::class.java, IMPLEMENTATION_NAME) as XSingleComponentFactory
@@ -74,4 +72,13 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
             }
         }
     }
+
+    override fun execute(arguments: Array<out NamedValue>): Any {
+        log.info("execute() called - plugin ready")
+        return ""
+    }
+
+    override fun getImplementationName(): String = IMPLEMENTATION_NAME
+    override fun supportsService(name: String): Boolean = name == SERVICE_NAME
+    override fun getSupportedServiceNames(): Array<String> = arrayOf(SERVICE_NAME)
 }
