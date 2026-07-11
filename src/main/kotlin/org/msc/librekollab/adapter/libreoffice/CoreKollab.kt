@@ -35,7 +35,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 import org.msc.librekollab.domain.KollabAPI
 import org.msc.librekollab.domain.model.Comment
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.SearchResult
+import org.msc.librekollab.domain.model.anchor.PageAnchor
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.change.ChangeAction
 import org.msc.librekollab.domain.model.change.ChangeStatus
@@ -104,6 +106,8 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         private const val DATE_TIME_VALUE_PROPERTY = "DateTimeValue"
 
         private const val SIZE_PROPERTY = "Size"
+        private const val BASE64_INPUT_GROUP_BYTES = 3
+        private const val BASE64_OUTPUT_GROUP_CHARS = 4
         private const val PIPE_SERVICE = "com.sun.star.io.Pipe"
         private const val PIPE_CHUNK_SIZE = 65536
         private const val GRAPHIC_EXPORT_FILTER_SERVICE = "com.sun.star.drawing.GraphicExportFilter"
@@ -320,7 +324,7 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
                 val image = imageOf(textDoc, shape)
                 vc.gotoRange(shapeAnchorRange(shape).start, false)
                 val page = pc.page.toInt()
-                val sizeMb = image.bytes.size / (1024.0 * 1024.0)
+                val sizeMb = base64EncodedByteCount(image.bytes.size) / (1024.0 * 1024.0)
                 ImageMeta(image.id, image.width, image.height, sizeMb, page, image.textAnchor)
             }
         }
@@ -329,6 +333,21 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
     override suspend fun getImage(documentId: String, imageId: String): Image? = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc ->
             getGraphicShapes(textDoc).asSequence().map { shape -> imageOf(textDoc, shape) }.firstOrNull { it.id == imageId }
+        }
+    }
+
+    override suspend fun search(documentId: String, searchText: String, page: Int, size: Int): SearchResult = withContext(libreOfficeDispatcher) {
+        withDocument(documentId) { textDoc ->
+            val vc = viewCursorOf(textDoc)
+            val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
+            val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+            val allFindings = enumerationSequence(paragraphs)
+                .mapIndexed { idx, para -> matchesInParagraph(para, idx, searchText, vc, pc) }
+                .flatten()
+                .toList()
+            val startIndex = (page - 1) * size
+            val elements = allFindings.drop(startIndex).take(size)
+            SearchResult(page, size, allFindings.size, elements)
         }
     }
 
@@ -481,6 +500,34 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         return state.copy(charOffset = state.charOffset + text.length, active = active)
     }
 
+    private fun matchesInParagraph(
+        para: Any,
+        paragraphIndex: Int,
+        searchText: String,
+        vc: XTextViewCursor,
+        pc: XPageCursor
+    ): List<PageAnchor> {
+        if (searchText.isEmpty()) {
+            return emptyList()
+        }
+        val (paragraphText, _) = extractParagraphMarkedText(para, ChangeStatus.FUSION, paragraphIndex)
+        val matchStarts = findAllOccurrences(paragraphText, searchText)
+        if (matchStarts.isEmpty()) {
+            return emptyList()
+        }
+        vc.gotoRange(UnoRuntime.queryInterface(XTextRange::class.java, para).start, false)
+        val page = pc.page.toInt()
+        return matchStarts.map { start ->
+            val matchedText = paragraphText.substring(start, start + searchText.length)
+            PageAnchor(TextAnchor(matchedText, paragraphIndex, start, start + searchText.length), page)
+        }
+    }
+
+    private fun findAllOccurrences(text: String, query: String): List<Int> =
+        generateSequence(text.indexOf(query, ignoreCase = true).takeIf { it >= 0 }) { previous ->
+            text.indexOf(query, previous + query.length, ignoreCase = true).takeIf { it >= 0 }
+        }.toList()
+
     private fun extractParagraphMarkedText(para: Any, changeStatus: ChangeStatus, paragraphIndex: Int): Pair<String, List<TextProperty>> {
         val portions = UnoRuntime.queryInterface(XEnumerationAccess::class.java, para)?.createEnumeration()
             ?: return Pair("", emptyList())
@@ -560,6 +607,11 @@ abstract class CoreKollab(protected val componentContext: XComponentContext) : K
         val anchor = buildTextAnchor(textDoc, shapeAnchorRange(shape))
         val bytes = exportShapePng(shape)
         return Image(bytes, size.Width, size.Height, anchor)
+    }
+
+    private fun base64EncodedByteCount(rawByteCount: Int): Int {
+        val inputGroups = (rawByteCount + BASE64_INPUT_GROUP_BYTES - 1) / BASE64_INPUT_GROUP_BYTES
+        return inputGroups * BASE64_OUTPUT_GROUP_CHARS
     }
 
     private fun exportShapePng(shape: Any): ByteArray {

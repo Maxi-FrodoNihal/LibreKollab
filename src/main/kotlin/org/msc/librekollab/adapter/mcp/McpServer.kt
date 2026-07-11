@@ -30,11 +30,13 @@ import org.msc.librekollab.adapter.mcp.request.GetImageRequest
 import org.msc.librekollab.adapter.mcp.request.GetTextByChapterRequest
 import org.msc.librekollab.adapter.mcp.request.GetTextByPagesRequest
 import org.msc.librekollab.adapter.mcp.request.GetTextRequest
+import org.msc.librekollab.adapter.mcp.request.SearchRequest
 import org.msc.librekollab.adapter.mcp.request.UpdateCommentRequest
 import org.msc.librekollab.adapter.mcp.schema.ToolSchemaGenerator
 import org.msc.librekollab.domain.KollabAPI
 import org.msc.librekollab.domain.model.Comment
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.SearchResult
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.image.ImageMeta
 import org.msc.librekollab.domain.model.image.ImageScaler
@@ -164,7 +166,10 @@ class McpServer(
 
         server.addTool(
             name = "get_image_metas",
-            description = "List metadata for all images embedded in a document as a JSON array",
+            description = "List metadata for all images embedded in a document as a JSON array. " +
+                "sizeMb reflects the actual Base64-encoded payload size that get_image will transmit " +
+                "(not the raw PNG size), so it can be used directly to decide whether to pass a " +
+                "downscaling 'scale' argument to get_image.",
             inputSchema = schemaGenerator.schemaOf(DocumentIdRequest.serializer())
         ) { getImageMetas(parseArgs<DocumentIdRequest>(it.params.arguments as JsonObject)) }
 
@@ -175,6 +180,14 @@ class McpServer(
                 "to shrink a too-large image to a quarter of its original width/height.",
             inputSchema = schemaGenerator.schemaOf(GetImageRequest.serializer())
         ) { getImage(parseArgs<GetImageRequest>(it.params.arguments as JsonObject)) }
+
+        server.addTool(
+            name = "search",
+            description = "Full-text search across the whole document. Case-insensitive, matches don't span " +
+                "paragraph boundaries. Returns a paginated JSON object with page, size, totalFindings, and " +
+                "elements (a list of anchors pointing at each match, each including the page it's on).",
+            inputSchema = schemaGenerator.schemaOf(SearchRequest.serializer())
+        ) { search(parseArgs<SearchRequest>(it.params.arguments as JsonObject)) }
     }
 
     private suspend fun listDocuments(): CallToolResult {
@@ -290,5 +303,10 @@ class McpServer(
     private suspend fun prepareImage(documentId: String, imageId: String, scale: Double?): ByteArray? {
         val image = kollab.getImage(documentId, imageId) ?: return null
         return scale?.let { imageScaler.scale(image.bytes, it) } ?: image.bytes
+    }
+
+    private suspend fun search(request: SearchRequest): CallToolResult {
+        val result = kollab.search(request.documentId, request.searchText, request.page, request.size)
+        return CallToolResult(content = listOf(TextContent(Json.encodeToString(SearchResult.serializer(), result))))
     }
 }

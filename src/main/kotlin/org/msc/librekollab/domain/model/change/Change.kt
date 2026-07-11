@@ -2,7 +2,7 @@ package org.msc.librekollab.domain.model.change
 
 import kotlinx.datetime.LocalDateTime
 import kotlinx.serialization.Serializable
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 
 @Serializable
 data class Change(

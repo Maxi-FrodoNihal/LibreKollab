@@ -1,4 +1,4 @@
-package org.msc.librekollab.domain.model
+package org.msc.librekollab.domain.model.anchor
 
 import kotlinx.serialization.Serializable
 import java.security.MessageDigest
@@ -22,5 +22,3 @@ data class TextAnchor(
                 .take(12)
     }
 }
-
-

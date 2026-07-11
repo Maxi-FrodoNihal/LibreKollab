@@ -1,23 +1,30 @@
 # LibreKollab
 
-A LibreOffice extension (.oxt) that exposes document editing as [MCP](https://modelcontextprotocol.io/) tools. Install it once and Claude Code can read, edit, and annotate any document you have open in LibreOffice — tracked changes, comments, chapters, pages, and more.
+*Libre*, for LibreOffice. *Kollab*, for Kollaboration — collaboration, spelled with a K on purpose, because it's written in Kotlin.
+
+A LibreOffice extension (.oxt) that turns a document you have open into an [MCP](https://modelcontextprotocol.io/) server, so an AI agent isn't just editing a file on disk somewhere — it's looking at and working on the exact document you have open. Any MCP-compatible agent can connect, not just one specific tool.
+
+## Why
+
+This is a hobby project — I write novels in LibreOffice and wanted a real way to work on them together with an AI, not just hand it the file and hope for the best.
+
+Editing a document with an AI usually means it rewrites the whole file and you diff it afterwards, hoping nothing important got lost. That's not really collaboration, it's a leap of faith. LibreKollab plugs straight into LibreOffice's own Track Changes instead: every edit the AI makes shows up as a normal tracked change, right next to your own. You review and accept or reject it the same way you would with a human co-author — nothing happens behind your back.
 
 ## What it does
 
-LibreKollab bridges LibreOffice and AI agents. The extension embeds an MCP server inside LibreOffice and exposes its document-editing capabilities as tools. Claude Code connects to that server and can:
+The extension embeds an MCP server inside LibreOffice itself and exposes the open document's editing capabilities as tools. Any MCP-compatible AI agent can connect to it and:
 
 - **Read** full text, specific pages, or individual chapters
 - **Edit** text ranges — all edits are recorded as LibreOffice tracked changes for human review
 - **Inspect** tracked changes with `BEFORE` / `FUSION` / `AFTER` views
 - **Manage comments** — add, update, delete, and retrieve annotations anchored to specific text ranges
 - **Read images** — list embedded image metadata (size, page, position) and retrieve the full image as PNG, optionally downscaled
-
-Humans retain full control: accept or reject tracked changes directly in LibreOffice.
+- **Search** — full-text search across the whole document, paginated
 
 ## Architecture
 
 ```
-Claude Code CLI
+MCP client (e.g. Claude Code)
       │  MCP (SSE, localhost:8080)
 LibreKollab OXT extension
       │  in-process UNO
@@ -47,11 +54,13 @@ The extension is written to `build/oxt/LibreKollab-1.0-SNAPSHOT.oxt`.
 
 ### Start the MCP server
 
-The server does **not** start automatically. Open the settings page and click **Start server**:
+This is deliberate: the extension never starts a server on its own, not even in the background. Whether an MCP server is listening at all is always an explicit choice you make yourself, by opening the settings page and clicking **Start server**:
 
 `Extras > Optionen > Internet > LibreKollab MCP Server`
 
-### Connect Claude Code
+### Connect an MCP client
+
+Point any MCP-compatible client at `http://localhost:8080/sse` (SSE transport). For Claude Code, for example:
 
 ```bash
 claude mcp add --transport sse --scope user librekollab http://localhost:8080/sse
@@ -90,6 +99,7 @@ This registers the server globally for all your Claude Code sessions.
 | `delete_comment` | Delete a comment |
 | `get_image_metas` | List metadata for all embedded images (id, size in 1/100mm, PNG size in MB, page, anchor) |
 | `get_image` | Retrieve a single image as PNG by its ID; optional `scale` (0–1) downscales it first |
+| `search` | Full-text search across the whole document (case-insensitive); paginated via optional `page` (default 1) and `size` (default 10) |
 
 The `documentId` parameter is the file name of the open document (e.g. `report.odt`).
 

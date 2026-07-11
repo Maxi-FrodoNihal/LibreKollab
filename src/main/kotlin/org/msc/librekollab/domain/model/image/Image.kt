@@ -1,6 +1,6 @@
 package org.msc.librekollab.domain.model.image
 
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 import java.security.MessageDigest
 
 data class Image(

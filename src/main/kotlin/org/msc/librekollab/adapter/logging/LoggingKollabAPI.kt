@@ -4,7 +4,8 @@ import org.msc.librekollab.domain.KollabAPI
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.change.ChangeStatus
 import org.msc.librekollab.domain.model.Comment
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.anchor.TextAnchor
+import org.msc.librekollab.domain.model.SearchResult
 import org.msc.librekollab.domain.model.image.Image
 import org.msc.librekollab.domain.model.image.ImageMeta
 import org.msc.librekollab.domain.model.text.MarkedText
@@ -117,6 +118,12 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
             foundStatus = "not found"
         }
         log.info("getImage(documentId=$documentId, imageId=$imageId) = $foundStatus")
+        return result
+    }
+
+    override suspend fun search(documentId: String, searchText: String, page: Int, size: Int): SearchResult {
+        val result = delegate.search(documentId, searchText, page, size)
+        log.info("search(documentId=$documentId, searchText=$searchText, page=$page, size=$size) = ${result.totalFindings} findings")
         return result
     }
 

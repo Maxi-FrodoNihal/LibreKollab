@@ -32,7 +32,8 @@ import org.msc.librekollab.adapter.logging.LoggingKollabAPI
 import org.msc.librekollab.adapter.mcp.McpServer
 import org.msc.librekollab.adapter.libreoffice.TestKollab
 import org.msc.librekollab.domain.model.Comment
-import org.msc.librekollab.domain.model.TextAnchor
+import org.msc.librekollab.domain.model.SearchResult
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.change.ChangeAction
 import org.msc.librekollab.domain.model.image.ImageMeta
@@ -571,8 +572,8 @@ class McpServerIT {
             })
             val imageContent = result.content.first() as ImageContent
             assertThat(imageContent.mimeType).isEqualTo("image/png")
+            assertThat(imageContent.data.length.toDouble() / (1024.0 * 1024.0)).isEqualTo(meta.sizeMb)
             val exportedBytes = java.util.Base64.getDecoder().decode(imageContent.data)
-            assertThat(exportedBytes.size.toDouble() / (1024.0 * 1024.0)).isEqualTo(meta.sizeMb)
             val originalBytes = javaClass.getResourceAsStream("/FrierenTest.png")!!.readBytes()
             assertThat(perceptualHash(exportedBytes)).isEqualTo(perceptualHash(originalBytes))
         }
@@ -606,6 +607,53 @@ class McpServerIT {
             val fullImage = javax.imageio.ImageIO.read(fullBytes.inputStream())
             assertThat(scaledImage.width).isEqualTo((fullImage.width * 0.25).toInt())
             assertThat(scaledImage.height).isEqualTo((fullImage.height * 0.25).toInt())
+        }
+    }
+
+    @Test
+    fun `T23 search finds matches across paragraphs and paginates`() {
+        runBlocking {
+            val documentId = upload("test_text_properties.odt")
+
+            val firstPageJson = tool("search", buildJsonObject {
+                put("documentId", documentId)
+                put("searchText", "Das ist ein")
+                put("page", 1)
+                put("size", 2)
+            })
+            val firstPage = Json.decodeFromString(SearchResult.serializer(), firstPageJson)
+            assertThat(firstPage.page).isEqualTo(1)
+            assertThat(firstPage.size).isEqualTo(2)
+            assertThat(firstPage.totalFindings).isEqualTo(4)
+            assertThat(firstPage.elements).hasSize(2)
+            assertThat(firstPage.elements.map { it.textAnchor.paragraphIndex }).containsExactly(0, 1)
+            assertThat(firstPage.elements[0].textAnchor).isEqualTo(TextAnchor("Das ist ein", 0, 0, 11))
+            assertThat(firstPage.elements).allMatch { it.page == 1 }
+
+            val secondPageJson = tool("search", buildJsonObject {
+                put("documentId", documentId)
+                put("searchText", "Das ist ein")
+                put("page", 2)
+                put("size", 2)
+            })
+            val secondPage = Json.decodeFromString(SearchResult.serializer(), secondPageJson)
+            assertThat(secondPage.totalFindings).isEqualTo(4)
+            assertThat(secondPage.elements).hasSize(2)
+            assertThat(secondPage.elements.map { it.textAnchor.paragraphIndex }).containsExactly(2, 3)
+        }
+    }
+
+    @Test
+    fun `T24 search is case-insensitive and preserves original casing in matched text`() {
+        runBlocking {
+            val documentId = upload("test_text_properties.odt")
+            val json = tool("search", buildJsonObject {
+                put("documentId", documentId)
+                put("searchText", "DAS IST EIN")
+            })
+            val result = Json.decodeFromString(SearchResult.serializer(), json)
+            assertThat(result.totalFindings).isEqualTo(4)
+            assertThat(result.elements).allMatch { it.textAnchor.text == "Das ist ein" }
         }
     }
 }

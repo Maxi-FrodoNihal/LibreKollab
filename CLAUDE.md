@@ -22,14 +22,16 @@ The extension implements `XJob` and is registered via `Jobs.xcu` to run on `onFi
 org.msc.librekollab
 ├── domain/
 │   ├── KollabAPI.kt    # central port — see KDoc for build instructions
-│   └── model/          # TextAnchor, Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
+│   └── model/          # Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
+│       ├── anchor/      # TextAnchor, PageAnchor (composes a TextAnchor + page)
 │       ├── change/
 │       ├── image/      # Image, ImageMeta
 │       └── text/
 │           └── properties/
 └── adapter/
     ├── mcp/            # McpServer
-    │   └── request/    # per-tool @Serializable request DTOs, decoded from the MCP call's JsonObject args
+    │   ├── request/    # per-tool @Serializable request DTOs, decoded from the MCP call's JsonObject args
+    │   └── schema/      # ToolSchemaGenerator, @Description — generates ToolSchema from a request DTO's SerialDescriptor
     ├── libreoffice/    # CoreKollab (abstract), LibreKollab (in-process, production)
     │   └── plugin/     # LibreKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
     └── logging/        # LoggingKollabAPI, LogDirResolver
@@ -140,7 +142,7 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 ## Images
 
-`ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` is the exported PNG's size, so callers can decide upfront whether to request a downscaled `get_image` call.
+`ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` reflects the Base64-encoded size `get_image` will actually transmit, not the raw PNG size — computed via the exact `4 * ceil(n / 3)` Base64 length formula in `CoreKollab.base64EncodedByteCount()` (no actual encoding happens in the domain), so callers get an honest number to decide upfront whether to request a downscaled `get_image` call.
 
 `Image(bytes, width, height, textAnchor, id)` — full image returned by `getImage`. `bytes` is the raw PNG data; Base64 encoding only happens at the MCP boundary in `McpServer`, never in the domain. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor. The `get_image` MCP tool returns this as a native `ImageContent` block (not JSON text) and accepts an optional `scale` argument (0 exclusive–1 inclusive) to downscale the PNG in `McpServer` before Base64-encoding it — the domain layer always exports at original resolution.
 
@@ -157,6 +159,14 @@ Implementation in `CoreKollab`:
 
 Writing: anchor resolved by walking paragraphs; annotation created via `XMultiServiceFactory`; `DateTimeValue` must be set explicitly.  
 Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementException` if not found.
+
+## Search
+
+`TextAnchor` and `PageAnchor` live in `domain/model/anchor/`. `PageAnchor(textAnchor, page)` composes a `TextAnchor` with the page it's on — composition, not inheritance, since `TextAnchor` is a `data class` (implicitly final in Kotlin, can't be subclassed).
+
+`SearchResult(page, size, totalFindings, elements: List<PageAnchor>)` in `domain/model/` — a paginated response, not a wrapper reused elsewhere. `page` is 1-based, `size` defaults to 10.
+
+`CoreKollab.search()` scans every paragraph via `enumerationSequence()`, matching case-insensitively and non-overlappingly within each paragraph (matches never span a paragraph boundary) against the `ChangeStatus.FUSION` text. `totalFindings` always reflects the full scan regardless of the requested page — pagination only slices which findings are returned, it doesn't limit the scan.
 
 ## MCP tools
 
@@ -178,6 +188,7 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 | `delete_comment` | `documentId`, `commentId` | — |
 | `get_image_metas` | `documentId` | — |
 | `get_image` | `documentId`, `imageId` | `scale` |
+| `search` | `documentId`, `searchText` | `page`, `size` |
 
 ## Logging
 

@@ -3,8 +3,9 @@ package org.msc.librekollab.domain
 import org.msc.librekollab.domain.model.change.Change
 import org.msc.librekollab.domain.model.change.ChangeStatus
 import org.msc.librekollab.domain.model.Comment
+import org.msc.librekollab.domain.model.SearchResult
+import org.msc.librekollab.domain.model.anchor.TextAnchor
 import org.msc.librekollab.domain.model.image.Image
-import org.msc.librekollab.domain.model.TextAnchor
 import org.msc.librekollab.domain.model.image.ImageMeta
 import org.msc.librekollab.domain.model.text.MarkedText
 
@@ -41,4 +42,6 @@ interface KollabAPI {
 
     suspend fun getImageMetas(documentId: String): List<ImageMeta>
     suspend fun getImage(documentId: String, imageId: String): Image?
+
+    suspend fun search(documentId: String, searchText: String, page: Int = 1, size: Int = 10): SearchResult
 }
