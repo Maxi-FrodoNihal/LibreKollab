@@ -49,8 +49,12 @@ class McpServer(
     private val schemaGenerator: ToolSchemaGenerator = ToolSchemaGenerator()
 ) {
 
+    companion object {
+        private const val LOCALHOST_HOST = "127.0.0.1"
+    }
+
     fun startSse(port: Int): EmbeddedServer<*, *> {
-        return embeddedServer(Netty, port = port) {
+        return embeddedServer(Netty, port = port, host = LOCALHOST_HOST) {
             install(SSE)
             routing {
                 mcp("/sse") {
