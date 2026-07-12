@@ -32,7 +32,9 @@ org.msc.librekollab
     ├── mcp/            # McpServer
     │   ├── request/    # per-tool @Serializable request DTOs, decoded from the MCP call's JsonObject args
     │   └── schema/      # ToolSchemaGenerator, @Description — generates ToolSchema from a request DTO's SerialDescriptor
-    ├── libreoffice/    # CoreKollab (abstract), LibreKollab (in-process, production)
+    ├── libreoffice/    # LibreKollab (open, concrete, implements KollabAPI directly), UnoClient, ImageCache
+    │   ├── component/  # CommentComponent, SearchComponent, TextComponent, RedlineComponent, ImageComponent,
+    │   │               # AuthorComponent, DocumentComponent (interface), LibreDocumentComponent
     │   └── plugin/     # LibreKollabPlugin (XJob), OptionsHandler (XContainerWindowEventHandler)
     └── logging/        # LoggingKollabAPI, LogDirResolver
 ```
@@ -42,7 +44,8 @@ Test sources:
 ```
 src/test/kotlin/
 └── org/msc/librekollab/
-    ├── adapter/libreoffice/TestKollab.kt   # Socket-based KollabAPI for tests
+    ├── adapter/libreoffice/TestKollab.kt              # class TestKollab : LibreKollab, AutoCloseable; TestKollab.viaSocket(...)
+    ├── adapter/libreoffice/component/TestDocumentComponent.kt   # socket/workspace-based DocumentComponent impl
     └── McpServerIT.kt
 ```
 
@@ -50,19 +53,52 @@ src/test/kotlin/
 
 See [`codingRules.md`](codingRules.md) for the full, numbered list (DDD/package rules, Kotlin style, I/O and concurrency). Add new rules there, appended with the next free number.
 
-## CoreKollab / LibreKollab / TestKollab
+## LibreKollab
 
-`CoreKollab` is the abstract base class implementing `KollabAPI`. It holds the `libreOfficeDispatcher` and all UNO logic. Subclasses only need to implement document access:
+There is no abstract base class anymore — `LibreKollab` (`adapter/libreoffice/`, `open class`) implements `KollabAPI` directly. It holds the `libreOfficeDispatcher` and orchestrates `withContext`/`withDocument`/`withDocumentMutating` around each call, delegating all actual UNO work to injected collaborators from `adapter/libreoffice/component/` (`CommentComponent`, `SearchComponent`, `TextComponent`, `RedlineComponent`, `ImageComponent`, `AuthorComponent`, `DocumentComponent`). `LibreKollab` itself no longer knows about `ImageCache` at all — `getImage()`'s upfront cache check is a plain call to `imageComponent.getCachedImage(imageId)`, which needs no `textDoc` and so can run before `withDocument`/UNO are touched at all (see "Images" below).
+
+What used to be two abstract methods overridden per subclass (`withDocument`/`withDocumentMutating`, plus `listDocuments()`) is now a single injected `documentComponent: DocumentComponent` — an interface, since document access is genuinely the one thing that differs in mechanism between production and tests (not just duplicated code, see "DocumentComponent" below). `LibreKollab`'s own `withDocument`/`withDocumentMutating` are now private one-line wrappers delegating to `documentComponent`, kept only so the ~15 call sites across `LibreKollab`'s methods didn't all need rewriting to say `documentComponent.withDocument(...)` directly.
+
+`LibreKollab` is marked `open` — not because it has abstract members, but so `TestKollab` (`src/test/`, see below) can subclass it to swap in a test-specific `documentComponent` and add its own `close()`. Production construction (`LibreKollabPlugin`) just calls `LibreKollab(componentContext)` and gets every default: `documentComponent = LibreDocumentComponent(componentContext, unoClient)`, `authorComponent = AuthorComponent(componentContext)`, etc. `LibreKollab` itself does **not** implement `AutoCloseable` and has no `close()`/`onClose` — production never needs to close anything (LibreOffice manages its own document lifecycle), so that concern deliberately doesn't live in this class; only `TestKollab` needs it, so only `TestKollab` has it (see "TestKollab" below).
+
+### DocumentComponent
+
+`DocumentComponent` (`adapter/libreoffice/component/`, interface) is the one component with two implementations, because — unlike Comment/Search/Text/Redline/Image, which behave identically regardless of caller — production and tests genuinely access documents differently, not just via duplicated code:
 
 ```kotlin
-abstract override suspend fun listDocuments(): List<String>
-protected abstract suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
-protected abstract suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
+interface DocumentComponent {
+    suspend fun listDocuments(): List<String>
+    suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T
+    suspend fun <T> withDocumentMutating(documentId: String, block: (XTextDocument) -> T): T
+}
 ```
 
-**`LibreKollab`** (`adapter/libreoffice/`, production) — takes `XComponentContext`, finds open documents via `XDesktop.getComponents()`. `listDocuments()` returns their file names. In `withDocumentMutating` it calls `XStorable.store()` after the block.
+- **`LibreDocumentComponent`** (`adapter/libreoffice/component/`, production default) — finds already-open documents via `XDesktop.getComponents()`, matching on file name/URL. `listDocuments()` returns their file names. `withDocumentMutating` calls `XStorable.store()` after the block. No loading/disposing — documents are assumed already open in the running LibreOffice instance.
+- **`TestDocumentComponent`** (`src/test/.../component/`, test-only, own top-level file — not nested) — loads a document fresh from a `containerWorkspacePath` via `XComponentLoader.loadComponentFromURL` for every single call, disposes it afterward, and stores it first if mutating. `listDocuments()` lists file names in the local `basePath` directory instead of asking a live desktop for open documents.
 
-**`TestKollab`** (`src/test/`, socket-based) — connects to LibreOffice via UNO socket, loads documents from a local `basePath` directory into a container workspace, stores mutated documents back. Created via `TestKollab.viaSocket(host, port, basePath, containerWorkspacePath)`.
+Both `DocumentComponent` implementations are dispatcher-agnostic — neither wraps its own work in `withContext(...)`. `LibreKollab` already wraps every `KollabAPI` call (including `listDocuments()`) in `withContext(libreOfficeDispatcher)` before ever touching `documentComponent`, so there is no need for a second, redundant dispatcher switch inside the component itself.
+
+### AuthorComponent
+
+`AuthorComponent` (`adapter/libreoffice/component/`) is a plain shared component (no interface — same UNO calls work identically whether `componentContext` is in-process or a remote socket bridge). It temporarily swaps the LibreOffice user profile's given name/surname to `author` for the duration of a block, restoring the old values afterward — this is what makes track-changes redlines record the right author. Extracted from what used to be two near-identical `withAuthor()` overrides on `LibreKollab` and `TestKollab` before the `CoreKollab` merge; unifying them into one shared component also fixed a latent inconsistency: the old `TestKollab` override guarded on `author.isEmpty()` while the old `LibreKollab` override guarded on `author == KollabAPI.UNKNOWN_AUTHOR` (`"Unknown Author"`, not `""`) — meaning tests were doing the profile-swap even for the default/unspecified author, while production correctly skipped it. `AuthorComponent` now uses the `UNKNOWN_AUTHOR` check everywhere, matching production's original (correct) behavior. Unlike `DocumentComponent`, `AuthorComponent` stayed a single shared class used by both production and `TestKollab` — the UNO calls are identical either way, so there was never a need for an interface here.
+
+### TestKollab
+
+`TestKollab` (`src/test/`) is a small subclass: `class TestKollab(context, basePath, containerWorkspacePath, onClose: () -> Unit = {}) : LibreKollab(context, documentComponent = TestDocumentComponent(context, basePath, containerWorkspacePath)), AutoCloseable`. It exists purely so the UNO-bridge-disposal concern (`onClose`/`close()`) stays out of `LibreKollab` — `AutoCloseable` is implemented here, not on the shared production class, since only tests ever need to close anything. A companion `TestKollab.viaSocket(host, port, basePath, containerWorkspacePath): TestKollab` bootstraps the UNO socket bridge to the Testcontainers LibreOffice instance and constructs `TestKollab` with an `onClose` that disposes that bridge. Callers (e.g. `McpServerIT`) hold the result typed as `TestKollab`, precisely so `.close()` stays visible on the type.
+
+### UnoClient and shared feature components
+
+`UnoClient` (`adapter/libreoffice/`) holds generic UNO primitives that don't belong to any one feature: `enumerationSequence` (wraps a UNO `XEnumeration` as a Kotlin `Sequence`), `viewCursorOf`/`pageCursorOf`, `paragraphAt`, `resolveAnchorRange`, `buildTextAnchor`, and the `DateTime`↔`LocalDateTime` conversions `localDateTimeOf`/`unoDateTimeNow`. `LibreKollab` holds a `private val unoClient: UnoClient = UnoClient()` — `private`, not `protected`, since there's no subclass anymore needing access to it. `UnoClient` stays directly under `adapter/libreoffice/`, alongside `LibreKollab`/`ImageCache` — it isn't itself a feature component.
+
+Feature-specific UNO logic lives under `adapter/libreoffice/component/`, injected via constructor with a default (e.g. `CommentComponent(unoClient)`, `SearchComponent(unoClient)`, `TextComponent(unoClient)`, `RedlineComponent(unoClient)`, `ImageComponent(componentContext, unoClient)`), matching the project's constructor-injection convention. Each takes a `UnoClient` (and, where needed, other already-declared constructor params — `ImageComponent` additionally needs `componentContext` for `GraphicExportFilter`/service creation) and exposes plain (non-suspend) methods operating on an already-resolved `XTextDocument`, plus its own private helpers, feature-specific constants, and collaborators (e.g. `ImageComponent`'s own `ImageCache`). `LibreKollab`'s `KollabAPI` overrides just handle `withContext`/`withDocument`/`withDocumentMutating` and delegate the body to the relevant component.
+
+- **`CommentComponent`** — `getComments`, `addComment`, `updateComment`, `deleteComment` (constants: `ANNOTATION_SERVICE`, `AUTHOR_PROPERTY`, etc.).
+- **`SearchComponent`** — `search(textDoc, searchText, page, size, paragraphTextOf)`, plus the private `matchesInParagraph`/`findAllOccurrences`. Search needs per-paragraph `ChangeStatus.FUSION` text, which is produced by `TextComponent.extractParagraphMarkedText` — not search-specific, so `SearchComponent` doesn't depend on `TextComponent` directly. Instead, `LibreKollab.search()` passes `textComponent.extractParagraphMarkedText(...)` in as a `paragraphTextOf: (Any, Int) -> String` lambda, keeping `SearchComponent` free of a dependency it doesn't own.
+- **`TextComponent`** — the read/write text operations: `getText`, `getTextByPages`, `getTextByChapter`, `getChapters`, `editText`, plus the public `extractParagraphMarkedText` (also called by `LibreKollab.search()`, see above) and the private helpers `insertFormattedText`/`formattingRuns`/`applyRunProperties`/`outlineLevel`/etc.
+- **`RedlineComponent`** — `changesInParagraph`, i.e. everything backing `getChanges()`: scanning `Redline`-type text portions into `Change` objects (`RedlineType`, `RedlineAuthor`, `RedlineDateTime`, `IsStart` — LibreOffice/UNO's own name for its Track Changes engine is "Redline", not a project term).
+- **`ImageComponent`** — `getCachedImage(imageId)`, `getImageMetas(documentId, textDoc)`, `getImage(documentId, textDoc, imageId)`, plus the private `getGraphicShapes`/`shapeAnchorRange`/`imageOf`/`cachedImageOf`/`base64EncodedByteCount`/`exportShapePng`/`readAllBytes` and its own `ImageCache = ImageCache()` default (see "Images" below). `getCachedImage()` needs only an `imageId`, no `textDoc` — that's what lets `LibreKollab.getImage()` call it before resolving the document at all.
+
+`TextComponent` and `RedlineComponent` both scan the same kind of UNO text-portion sequence (grouped by `TextPortionType` = `"Redline"` vs `"Text"`) but for different purposes — `TextComponent` tracks whether a portion is currently inside a visible insert/delete bracket to decide what to include in `MarkedText`, while `RedlineComponent` extracts the actual `Change` (author, timestamp, action) once a bracket closes. Both therefore declare their own small `TEXT_PORTION_TYPE_PROPERTY`/`PORTION_TYPE_REDLINE`/`PORTION_TYPE_TEXT`/`IS_START_PROPERTY`/`REDLINE_TYPE_PROPERTY`/`REDLINE_TYPE_INSERT`/`REDLINE_TYPE_DELETE` constants rather than sharing them — consistent with each component owning its own constants (see `CommentComponent`), and keeping `UnoClient` free of feature-specific property-name literals.
 
 ## OXT packaging
 
@@ -138,22 +174,22 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 `TextProperty` is a sealed interface. Implementations: `BoldProperty`, `ItalicProperty`, `UnderlineProperty`, `StrikethroughProperty` — each holds a `MarkIndex(paragraphIndex, from, to)`.
 
-`insertFormattedText` (in `CoreKollab`, used by `editText`) inserts `newText` one formatting run at a time, setting the cursor's character properties *before* each `insertString` call — never insert plain text and reformat it afterward. Reformatting already-inserted, not-yet-accepted text makes LibreOffice record the attribute change as its own "Format" redline, splitting one logical insert into two adjacent redlines. `getChanges()` reads redlines by bracket (`IsStart`/`IsEnd`) and resets its accumulator on every redline end, so a Format redline ending between two Insert-redline halves silently drops everything after it. This only reproduces against a real, GUI-attached LibreOffice — see Testing below.
+`insertFormattedText` (in `TextComponent`, used by `editText`) inserts `newText` one formatting run at a time, setting the cursor's character properties *before* each `insertString` call — never insert plain text and reformat it afterward. Reformatting already-inserted, not-yet-accepted text makes LibreOffice record the attribute change as its own "Format" redline, splitting one logical insert into two adjacent redlines. `getChanges()` reads redlines by bracket (`IsStart`/`IsEnd`) and resets its accumulator on every redline end, so a Format redline ending between two Insert-redline halves silently drops everything after it. This only reproduces against a real, GUI-attached LibreOffice — see Testing below.
 
 ## Images
 
-`ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` reflects the Base64-encoded size `get_image` will actually transmit, not the raw PNG size — computed via the exact `4 * ceil(n / 3)` Base64 length formula in `CoreKollab.base64EncodedByteCount()` (no actual encoding happens in the domain), so callers get an honest number to decide upfront whether to request a downscaled `get_image` call.
+`ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` reflects the Base64-encoded size `get_image` will actually transmit, not the raw PNG size — computed via the exact `4 * ceil(n / 3)` Base64 length formula in `ImageComponent.base64EncodedByteCount()` (no actual encoding happens in the domain), so callers get an honest number to decide upfront whether to request a downscaled `get_image` call.
 
 `Image(bytes, width, height, textAnchor, id)` — full image returned by `getImage`. `bytes` is the raw PNG data; Base64 encoding only happens at the MCP boundary in `McpServer`, never in the domain. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor. The `get_image` MCP tool returns this as a native `ImageContent` block (not JSON text) and accepts an optional `scale` argument (0 exclusive–1 inclusive) to downscale the PNG in `McpServer` before Base64-encoding it — the domain layer always exports at original resolution.
 
-Implementation in `CoreKollab`:
+Implementation in `ImageComponent` (`adapter/libreoffice/component/`, see "UnoClient and feature components" above):
 - `XTextGraphicObjectsSupplier.getGraphicObjects()` enumerates all embedded images by name.
-- Each shape is exported to PNG via `GraphicExportFilter` (`com.sun.star.drawing.GraphicExportFilter`): `XExporter.setSourceDocument(shape)` + `XFilter.filter(props)` writing to a `com.sun.star.io.Pipe`. The Pipe implements both `XInputStream` and `XOutputStream` and lives on the LibreOffice side — bytes are read back over the UNO bridge via `XInputStream.readBytes()`.
+- Each shape is exported to PNG via `GraphicExportFilter` (`com.sun.star.drawing.GraphicExportFilter`): `XExporter.setSourceDocument(shape)` + `XFilter.filter(props)` writing to a `com.sun.star.io.Pipe`. The Pipe implements both `XInputStream` and `XOutputStream` and lives on the LibreOffice side — bytes are read back over the UNO bridge via `XInputStream.readBytes()`. This needs `componentContext` (for `XMultiComponentFactory.createInstanceWithContext`), which is why `ImageComponent` takes it in its constructor alongside `UnoClient`.
 - Page number is resolved by moving a `XPageCursor` to the image anchor.
 
 `ImageCache` (`adapter/libreoffice/`) holds actual image bytes in exactly one place — `byId: Cache<String, Image>` keyed by `Image.id`, bounded by total byte weight (`maximumWeight` + a `Weigher` on `image.bytes.size`, not entry count — images vary wildly in size) with an `expireAfterAccess` safety net. Since `Image.id` is a content hash (bytes + dimensions + anchor), it's only known *after* exporting, so an id-only cache can't avoid a first-time export. A second, tiny `shapeToId: Cache<Pair<String, String>, String>` — keyed by `(documentId, shape name)`, known *before* export — stores only the id string, not the image, and is bounded by entry count instead of weight. Two independently-sized byte-weighted caches would let their retained sets drift apart over time (each evicting on its own schedule) and double the real worst-case memory bound; routing the shape lookup through a lightweight id-index into the single byte-holding cache avoids that.
 
-`cachedImageOf()` in `CoreKollab` calls `getByShape()` (index lookup, then `byId` lookup) first; only a full miss triggers `imageOf()` (the actual UNO export), after which `put()` populates both `byId` and `shapeToId`. `getImage()` additionally checks `byId` directly up front, before touching UNO at all, for the case where the caller already has an `imageId` from a prior response. A changed image in the document produces a different content-hash id, so a stale entry is simply never looked up again and ages out via the weight/access bounds — no explicit invalidation needed. Injected via constructor with a default (`CoreKollab(componentContext, imageCache = ImageCache())`), matching the project's constructor-injection convention.
+`ImageComponent.cachedImageOf()` calls `getByShape()` (index lookup, then `byId` lookup) first; only a full miss triggers `imageOf()` (the actual UNO export), after which `put()` populates both `byId` and `shapeToId`. `LibreKollab.getImage()` additionally calls `imageComponent.getCachedImage(imageId)` directly up front, before calling into `withDocument` at all, for the case where the caller already has an `imageId` from a prior response — since that lookup needs only the `imageId`, not a resolved `XTextDocument`, it can run ahead of any UNO access. A changed image in the document produces a different content-hash id, so a stale entry is simply never looked up again and ages out via the weight/access bounds — no explicit invalidation needed. `ImageCache` is entirely private to `ImageComponent` (`imageCache: ImageCache = ImageCache()`) — `LibreKollab` doesn't hold a reference to it at all, only to `ImageComponent`.
 
 ## Comments (UNO annotations)
 
@@ -170,7 +206,7 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 
 `SearchResult(page, size, totalFindings, elements: List<PageAnchor>)` in `domain/model/` — a paginated response, not a wrapper reused elsewhere. `page` is 1-based, `size` defaults to 10.
 
-`CoreKollab.search()` scans every paragraph via `enumerationSequence()`, matching case-insensitively and non-overlappingly within each paragraph (matches never span a paragraph boundary) against the `ChangeStatus.FUSION` text. `totalFindings` always reflects the full scan regardless of the requested page — pagination only slices which findings are returned, it doesn't limit the scan.
+`LibreKollab.search()` resolves the document, then delegates to `SearchComponent.search()` (see "UnoClient and shared feature components" above), passing a `paragraphTextOf` lambda backed by `extractParagraphMarkedText(..., ChangeStatus.FUSION, ...)`. `SearchComponent` scans every paragraph via `unoClient.enumerationSequence()`, matching case-insensitively and non-overlappingly within each paragraph (matches never span a paragraph boundary). `totalFindings` always reflects the full scan regardless of the requested page — pagination only slices which findings are returned, it doesn't limit the scan.
 
 ## MCP tools
 

@@ -684,4 +684,95 @@ class McpServerIT {
             assertThat(getImageElapsedMs).isLessThan(metasElapsedMs)
         }
     }
+
+    @Test
+    fun `T26 get_edit_mode reflects track changes state before and after an edit`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val before = tool("get_edit_mode", buildJsonObject { put("documentId", documentId) })
+            assertThat(before).isEqualTo("false")
+
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "Hallo")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 0)
+                put("anchorCharEnd", 5)
+                put("newText", "Tschüss")
+            })
+
+            val after = tool("get_edit_mode", buildJsonObject { put("documentId", documentId) })
+            assertThat(after).isEqualTo("true")
+        }
+    }
+
+    @Test
+    fun `T27 get_comment returns not-found text for an unknown id`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val result = tool("get_comment", buildJsonObject {
+                put("documentId", documentId)
+                put("commentId", "does-not-exist")
+            })
+            assertThat(result).isEqualTo("not found")
+        }
+    }
+
+    @Test
+    fun `T28 update_comment on an unknown id returns a tool error`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val result = sharedClient.callTool("update_comment", buildJsonObject {
+                put("documentId", documentId)
+                put("commentId", "does-not-exist")
+                put("newText", "irrelevant")
+            })
+            assertThat(result.isError).isEqualTo(true)
+            assertThat((result.content.first() as TextContent).text).contains("not found")
+        }
+    }
+
+    @Test
+    fun `T28b delete_comment on an unknown id returns a tool error`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val result = sharedClient.callTool("delete_comment", buildJsonObject {
+                put("documentId", documentId)
+                put("commentId", "does-not-exist")
+            })
+            assertThat(result.isError).isEqualTo(true)
+            assertThat((result.content.first() as TextContent).text).contains("not found")
+        }
+    }
+
+    @Test
+    fun `T29 search returns zero findings when nothing matches`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val json = tool("search", buildJsonObject {
+                put("documentId", documentId)
+                put("searchText", "this text does not appear anywhere in the document")
+            })
+            val result = Json.decodeFromString(SearchResult.serializer(), json)
+            assertThat(result.totalFindings).isEqualTo(0)
+            assertThat(result.elements).isEmpty()
+        }
+    }
+
+    @Test
+    fun `T30 edit_text with an out-of-range paragraph index returns a tool error`() {
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+            val result = sharedClient.callTool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "irrelevant")
+                put("anchorParagraphIndex", 999)
+                put("anchorCharStart", 0)
+                put("anchorCharEnd", 0)
+                put("newText", "irrelevant")
+            })
+            assertThat(result.isError).isEqualTo(true)
+            assertThat((result.content.first() as TextContent).text).contains("Paragraph index 999 not found")
+        }
+    }
 }

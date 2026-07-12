@@ -6,7 +6,8 @@ class LogDirResolver : PropertyDefinerBase() {
     override fun getPropertyValue(): String {
         val logDir: String
         if (isWindows()) {
-            logDir = "${System.getenv("APPDATA")}\\librekollab"
+            val appData = System.getenv("APPDATA") ?: "${System.getProperty("user.home")}\\AppData\\Roaming"
+            logDir = "$appData\\librekollab"
         } else {
             logDir = "${System.getProperty("user.home")}/.config/librekollab"
         }

@@ -14,7 +14,9 @@ class ImageScaler {
 
     fun scale(image: ByteArray, factor: Double): ByteArray {
         require(factor > 0.0 && factor <= 1.0) { "scale must be greater than 0 and at most 1" }
-        val original = ImageIO.read(ByteArrayInputStream(image))
+        val original = requireNotNull(ImageIO.read(ByteArrayInputStream(image))) {
+            "Unable to decode image: unsupported or corrupt format"
+        }
         val targetWidth = (original.width * factor).toInt().coerceAtLeast(1)
         val targetHeight = (original.height * factor).toInt().coerceAtLeast(1)
         val scaled = BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB)
