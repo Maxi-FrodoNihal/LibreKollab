@@ -200,13 +200,15 @@ Implementation in `ImageComponent` (`adapter/libreoffice/component/`, see "UnoCl
 - `Image.id` — SHA-256 of the raw PNG bytes + `":$width:$height:${textAnchor.id}"`.
 - `Comment.id` — SHA-256 of `"${anchor.id}:$author"`. Deliberately excludes `content`/`dateTime` (both change on `updateComment`, and the id must survive an update) and deliberately includes `author` (not just `anchor.id`) so two different reviewers commenting on the exact same text range get distinct ids — `CommentComponent.findCommentField()` matches by rebuilding the full `Comment` and comparing `.id`. The one remaining edge case — the *same* author commenting the exact same anchor twice — still collides; accepted as an unlikely corner case rather than adding a persisted per-comment UUID.
 
+**`encodeDefaults` gotcha:** `Json`'s default (`encodeDefaults = false`) omits a property from the wire JSON whenever its *current* value equals what re-running its default-parameter expression would produce right now — not "whenever the property merely has a default." Verified against the decompiled `write$Self` bytecode: for `Comment`/`TextAnchor`, the generated serializer literally re-embeds the `id` default expression and compares it (`Intrinsics.areEqual`) against the actual field before deciding whether to write it. Since every real `Comment`/`TextAnchor` in this codebase is built via the default (nothing ever passes an explicit, different `id`), that comparison is always true — so with the bare `Json` singleton, `id` would be silently missing from every response, while still round-tripping "correctly" in Kotlin-to-Kotlin tests, because `Json.decodeFromString` just recomputes the same missing default on the way back in. `McpServer` therefore uses its own `private val json = Json { encodeDefaults = true }` (companion object) instead of the bare `Json` object, for every encode *and* decode call in the file.
+
 ## Comments (UNO annotations)
 
 `TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (see "Id generation" above).
 
 `Comment` — `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
 
-Writing: anchor resolved by walking paragraphs; annotation created via `XMultiServiceFactory`; `DateTimeValue` must be set explicitly.  
+Writing: anchor resolved by walking paragraphs; annotation created via `XMultiServiceFactory`; `DateTimeValue` must be set explicitly. `CommentComponent.addComment()` returns the created `Comment` (built via the same `commentOf()` helper `getComments()` uses) so the caller gets the new comment's `id` back immediately, instead of having to call `get_comments` again and re-match it by anchor/author/content.  
 Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementException` if not found.
 
 ## Search

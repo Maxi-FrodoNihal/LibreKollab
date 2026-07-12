@@ -89,9 +89,10 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
         return result
     }
 
-    override suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor) {
-        log.info("addComment(documentId=$documentId, author=$author, anchor=$anchor)")
-        delegate.addComment(documentId, commentText, author, anchor)
+    override suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor): Comment {
+        val result = delegate.addComment(documentId, commentText, author, anchor)
+        log.info("addComment(documentId=$documentId, author=$author, anchor=$anchor) = $result")
+        return result
     }
 
     override suspend fun updateComment(documentId: String, commentId: String, newText: String) {

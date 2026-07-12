@@ -94,7 +94,7 @@ This registers the server globally for all your Claude Code sessions.
 | `edit_text` | Replace a text range (creates tracked change) |
 | `get_comments` | All comments as JSON |
 | `get_comment` | Single comment by ID |
-| `add_comment` | Add a comment anchored to a text range |
+| `add_comment` | Add a comment anchored to a text range; returns the created comment (including its `id`) |
 | `update_comment` | Update comment text |
 | `delete_comment` | Delete a comment |
 | `get_image_metas` | List metadata for all embedded images (id, size in 1/100mm, PNG size in MB, page, anchor) |

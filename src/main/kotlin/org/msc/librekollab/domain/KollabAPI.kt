@@ -36,7 +36,7 @@ interface KollabAPI {
 
     suspend fun getComments(documentId: String): List<Comment>
     suspend fun getComment(documentId: String, commentId: String): Comment?
-    suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor)
+    suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor): Comment
     suspend fun updateComment(documentId: String, commentId: String, newText: String)
     suspend fun deleteComment(documentId: String, commentId: String)
 

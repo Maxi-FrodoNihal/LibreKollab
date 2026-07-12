@@ -52,6 +52,11 @@ class McpServer(
     companion object {
         private const val LOCALHOST_HOST = "127.0.0.1"
         private const val PNG_MIME_TYPE = "image/png"
+
+        // Default Json() has encodeDefaults = false, which omits any property whose value equals
+        // its recomputed default -- and id fields (TextAnchor.id, Comment.id) are ALWAYS computed via
+        // their default expression, so they'd always be silently missing from the wire JSON otherwise.
+        private val json = Json { encodeDefaults = true }
     }
 
     fun startSse(port: Int): EmbeddedServer<*, *> {
@@ -83,7 +88,7 @@ class McpServer(
         options = ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false)))
     )
 
-    private inline fun <reified T> parseArgs(args: JsonObject): T = Json.decodeFromJsonElement(args)
+    private inline fun <reified T> parseArgs(args: JsonObject): T = json.decodeFromJsonElement(args)
 
     private fun registerTools(server: Server) {
         server.addTool(
@@ -153,7 +158,7 @@ class McpServer(
 
         server.addTool(
             name = "add_comment",
-            description = "Add a comment anchored to a text range in a document",
+            description = "Add a comment anchored to a text range in a document. Returns the created comment as JSON, including its id",
             inputSchema = schemaGenerator.schemaOf(AddCommentRequest.serializer())
         ) { addComment(parseArgs<AddCommentRequest>(it.params.arguments as JsonObject)) }
 
@@ -202,7 +207,7 @@ class McpServer(
 
     private suspend fun getText(request: GetTextRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(MarkedText.serializer(), kollab.getText(request.documentId, request.changeStatus))
+            json.encodeToString(MarkedText.serializer(), kollab.getText(request.documentId, request.changeStatus))
         )))
     }
 
@@ -216,7 +221,7 @@ class McpServer(
 
     private suspend fun getTextByPages(request: GetTextByPagesRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(
+            json.encodeToString(
                 MarkedText.serializer(),
                 kollab.getTextByPages(request.documentId, request.fromPage, request.toPage, request.changeStatus)
             )
@@ -225,7 +230,7 @@ class McpServer(
 
     private suspend fun getTextByChapter(request: GetTextByChapterRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(
+            json.encodeToString(
                 MarkedText.serializer(),
                 kollab.getTextByChapter(request.documentId, request.chapter, request.changeStatus)
             )
@@ -234,7 +239,7 @@ class McpServer(
 
     private suspend fun getChanges(request: DocumentIdRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(ListSerializer(Change.serializer()), kollab.getChanges(request.documentId))
+            json.encodeToString(ListSerializer(Change.serializer()), kollab.getChanges(request.documentId))
         )))
     }
 
@@ -255,14 +260,14 @@ class McpServer(
 
     private suspend fun getComments(request: DocumentIdRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(ListSerializer(Comment.serializer()), kollab.getComments(request.documentId))
+            json.encodeToString(ListSerializer(Comment.serializer()), kollab.getComments(request.documentId))
         )))
     }
 
     private suspend fun getComment(request: DocumentAndCommentIdRequest): CallToolResult {
         val comment = kollab.getComment(request.documentId, request.commentId)
             ?: return CallToolResult(content = listOf(TextContent("not found")), isError = true)
-        return CallToolResult(content = listOf(TextContent(Json.encodeToString(Comment.serializer(), comment))))
+        return CallToolResult(content = listOf(TextContent(json.encodeToString(Comment.serializer(), comment))))
     }
 
     private suspend fun addComment(request: AddCommentRequest): CallToolResult {
@@ -272,13 +277,13 @@ class McpServer(
             charStart = request.anchorCharStart,
             charEnd = request.anchorCharEnd
         )
-        kollab.addComment(
+        val comment = kollab.addComment(
             documentId = request.documentId,
             commentText = request.commentText,
             author = request.author,
             anchor = anchor
         )
-        return CallToolResult(content = listOf(TextContent("ok")))
+        return CallToolResult(content = listOf(TextContent(json.encodeToString(Comment.serializer(), comment))))
     }
 
     private suspend fun updateComment(request: UpdateCommentRequest): CallToolResult {
@@ -293,7 +298,7 @@ class McpServer(
 
     private suspend fun getImageMetas(request: DocumentIdRequest): CallToolResult {
         return CallToolResult(content = listOf(TextContent(
-            Json.encodeToString(ListSerializer(ImageMeta.serializer()), kollab.getImageMetas(request.documentId))
+            json.encodeToString(ListSerializer(ImageMeta.serializer()), kollab.getImageMetas(request.documentId))
         )))
     }
 
@@ -312,6 +317,6 @@ class McpServer(
 
     private suspend fun search(request: SearchRequest): CallToolResult {
         val result = kollab.search(request.documentId, request.searchText, request.page, request.size)
-        return CallToolResult(content = listOf(TextContent(Json.encodeToString(SearchResult.serializer(), result))))
+        return CallToolResult(content = listOf(TextContent(json.encodeToString(SearchResult.serializer(), result))))
     }
 }

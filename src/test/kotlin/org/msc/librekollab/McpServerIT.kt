@@ -274,10 +274,10 @@ class McpServerIT {
     }
 
     @Test
-    fun `T09 add_comment inserts comment at text anchor`() {
+    fun `T09 add_comment inserts comment at text anchor and returns it with its id`() {
         runBlocking {
             val documentId = upload("test_add_comment.odt")
-            tool("add_comment", buildJsonObject {
+            val addedJson = tool("add_comment", buildJsonObject {
                 put("documentId", documentId)
                 put("commentText", "Test Kommentar")
                 put("author", "Max Mustermann")
@@ -286,10 +286,22 @@ class McpServerIT {
                 put("anchorCharStart", 7)
                 put("anchorCharEnd", 20)
             })
+            // Regression check for the encodeDefaults=false gotcha: Comment.id/TextAnchor.id are always
+            // computed via their default expression, so kotlinx.serialization silently omits them from
+            // the wire JSON unless the Json instance has encodeDefaults=true — assert on the raw text,
+            // not just the decoded object, since decoding would silently recompute a missing id anyway.
+            assertThat(addedJson).contains("\"id\"")
+            val added = Json.decodeFromString(Comment.serializer(), addedJson)
+            assertThat(added.id).hasSize(12)
+            assertThat(added.content).isEqualTo("Test Kommentar")
+            assertThat(added.author).isEqualTo("Max Mustermann")
+            assertThat(added.anchor).isEqualTo(TextAnchor("add a comment", 0, 7, 20))
 
             val json = tool("get_comments", buildJsonObject { put("documentId", documentId) })
+            assertThat(json).contains("\"id\"")
             val comments = Json.decodeFromString(ListSerializer(Comment.serializer()), json)
             assertThat(comments).hasSize(1)
+            assertThat(comments[0].id).isEqualTo(added.id)
             assertThat(comments[0].content).isEqualTo("Test Kommentar")
             assertThat(comments[0].author).isEqualTo("Max Mustermann")
             assertThat(comments[0].anchor).isEqualTo(TextAnchor("add a comment", 0, 7, 20))

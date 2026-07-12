@@ -42,7 +42,7 @@ class CommentComponent(private val unoClient: UnoClient) {
         textDoc.text.removeTextContent(UnoRuntime.queryInterface(XTextContent::class.java, field))
     }
 
-    fun addComment(textDoc: XTextDocument, commentText: String, author: String, anchor: TextAnchor) {
+    fun addComment(textDoc: XTextDocument, commentText: String, author: String, anchor: TextAnchor): Comment {
         val anchorRange = unoClient.resolveAnchorRange(textDoc, anchor)
         val serviceFactory = UnoRuntime.queryInterface(XMultiServiceFactory::class.java, textDoc)
         val annotationField = serviceFactory.createInstance(ANNOTATION_SERVICE)
@@ -56,6 +56,7 @@ class CommentComponent(private val unoClient: UnoClient) {
             UnoRuntime.queryInterface(XTextContent::class.java, annotationField),
             true
         )
+        return commentOf(textDoc, annotationField)
     }
 
     private fun commentFields(textDoc: XTextDocument): Sequence<Any> {

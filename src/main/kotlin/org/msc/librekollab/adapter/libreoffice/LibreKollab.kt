@@ -136,13 +136,12 @@ open class LibreKollab(
         }
     }
 
-    override suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor) {
+    override suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor): Comment =
         withContext(libreOfficeDispatcher) {
             withDocumentMutating(documentId) { textDoc ->
                 commentComponent.addComment(textDoc, commentText, author, anchor)
             }
         }
-    }
 
     override suspend fun getImageMetas(documentId: String): List<ImageMeta> = withContext(libreOfficeDispatcher) {
         withDocument(documentId) { textDoc -> imageComponent.getImageMetas(documentId, textDoc) }
