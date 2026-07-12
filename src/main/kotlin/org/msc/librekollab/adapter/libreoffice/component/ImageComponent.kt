@@ -94,20 +94,23 @@ class ImageComponent(
         val pipeObj = smgr.createInstanceWithContext(PIPE_SERVICE, componentContext)
         val pipeIn = UnoRuntime.queryInterface(XInputStream::class.java, pipeObj)
         val pipeOut = UnoRuntime.queryInterface(XOutputStream::class.java, pipeObj)
-        val exporter = UnoRuntime.queryInterface(
-            XExporter::class.java,
-            smgr.createInstanceWithContext(GRAPHIC_EXPORT_FILTER_SERVICE, componentContext)
-        )
-        exporter.setSourceDocument(
-            UnoRuntime.queryInterface(XComponent::class.java, shape)
-                ?: throw IllegalStateException("Graphic shape does not implement XComponent")
-        )
-        UnoRuntime.queryInterface(XFilter::class.java, exporter).filter(arrayOf(
-            PropertyValue().apply { Name = OUTPUT_STREAM_PROPERTY; Value = pipeOut },
-            PropertyValue().apply { Name = MEDIA_TYPE_PROPERTY; Value = PNG_MEDIA_TYPE }
-        ))
-        pipeOut.closeOutput()
-        return readAllBytes(pipeIn)
+        val exporterObj = smgr.createInstanceWithContext(GRAPHIC_EXPORT_FILTER_SERVICE, componentContext)
+        val exporter = UnoRuntime.queryInterface(XExporter::class.java, exporterObj)
+        try {
+            exporter.setSourceDocument(
+                UnoRuntime.queryInterface(XComponent::class.java, shape)
+                    ?: throw IllegalStateException("Graphic shape does not implement XComponent")
+            )
+            UnoRuntime.queryInterface(XFilter::class.java, exporter).filter(arrayOf(
+                PropertyValue().apply { Name = OUTPUT_STREAM_PROPERTY; Value = pipeOut },
+                PropertyValue().apply { Name = MEDIA_TYPE_PROPERTY; Value = PNG_MEDIA_TYPE }
+            ))
+            pipeOut.closeOutput()
+            return readAllBytes(pipeIn)
+        } finally {
+            UnoRuntime.queryInterface(XComponent::class.java, exporterObj)?.dispose()
+            UnoRuntime.queryInterface(XComponent::class.java, pipeObj)?.dispose()
+        }
     }
 
     private fun readAllBytes(input: XInputStream): ByteArray {
@@ -115,7 +118,9 @@ class ImageComponent(
         val holder = Array(1) { ByteArray(0) }
         while (true) {
             val n = input.readBytes(holder, PIPE_CHUNK_SIZE)
-            if (n == 0) break
+            if (n == 0) {
+                break
+            }
             out.write(holder[0])
         }
         input.closeInput()

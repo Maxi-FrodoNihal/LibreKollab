@@ -55,8 +55,7 @@ class TextComponent(private val unoClient: UnoClient) {
     }
 
     fun getText(textDoc: XTextDocument, changeStatus: ChangeStatus): MarkedText {
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        val results = unoClient.enumerationSequence(paragraphs)
+        val results = unoClient.paragraphsOf(textDoc)
             .mapIndexed { idx, para -> extractParagraphMarkedText(para, changeStatus, idx) }
             .toList()
         return MarkedText(results.joinToString("\n") { it.first }, results.flatMap { it.second })
@@ -65,8 +64,7 @@ class TextComponent(private val unoClient: UnoClient) {
     fun getTextByPages(textDoc: XTextDocument, fromPage: Int, toPage: Int, changeStatus: ChangeStatus): MarkedText {
         val vc = unoClient.viewCursorOf(textDoc)
         val pc = UnoRuntime.queryInterface(XPageCursor::class.java, vc)
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        val results = unoClient.enumerationSequence(paragraphs)
+        val results = unoClient.paragraphsOf(textDoc)
             .mapIndexed { idx, element ->
                 vc.gotoRange(UnoRuntime.queryInterface(XTextRange::class.java, element).start, false)
                 Triple(idx, element, pc.page.toInt())
@@ -78,13 +76,16 @@ class TextComponent(private val unoClient: UnoClient) {
         return MarkedText(results.joinToString("\n") { it.first }, results.flatMap { it.second })
     }
 
+    // Deliberately imperative: the stop level is only known once the matching heading is found mid-scan,
+    // and a fold/takeWhile rewrite would need to materialize every paragraph upfront, losing the early
+    // exit once the chapter ends.
     fun getTextByChapter(textDoc: XTextDocument, chapter: String, changeStatus: ChangeStatus): MarkedText {
         val sb = StringBuilder()
         val properties = mutableListOf<TextProperty>()
         var inChapter = false
         var chapterLevel = 0
         var paraIdx = 0
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+        val paragraphs = unoClient.paragraphEnumerationOf(textDoc)
         while (paragraphs.hasMoreElements()) {
             val element = paragraphs.nextElement()
             val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, element)
@@ -109,13 +110,11 @@ class TextComponent(private val unoClient: UnoClient) {
         return MarkedText(sb.toString().trimEnd(), properties)
     }
 
-    fun getChapters(textDoc: XTextDocument): List<String> {
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        return unoClient.enumerationSequence(paragraphs)
+    fun getChapters(textDoc: XTextDocument): List<String> =
+        unoClient.paragraphsOf(textDoc)
             .filter { outlineLevel(UnoRuntime.queryInterface(XPropertySet::class.java, it)) > 0 }
             .map { UnoRuntime.queryInterface(XTextRange::class.java, it).string }
             .toList()
-    }
 
     fun editText(textDoc: XTextDocument, anchor: TextAnchor, newText: MarkedText) {
         unoClient.resolveAnchorRange(textDoc, anchor).setString("")
@@ -224,7 +223,9 @@ class TextComponent(private val unoClient: UnoClient) {
     }
 
     private fun formattingRuns(line: String, lineIdx: Int, properties: List<TextProperty>): List<FormattingRun> {
-        if (line.isEmpty()) return emptyList()
+        if (line.isEmpty()) {
+            return emptyList()
+        }
         val lineProperties = properties.filter { it.markIndex.paragraphIndex == lineIdx }
         val cuts = (lineProperties.flatMap { listOf(it.markIndex.from, it.markIndex.to) } + listOf(0, line.length))
             .toSortedSet().toList()

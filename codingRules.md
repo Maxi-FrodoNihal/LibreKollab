@@ -11,7 +11,7 @@ Für alle Regeln gilt: der Entwickler kann im Einzelfall begründete Ausnahmen d
 3. `if`-Statements haben immer geschweifte Klammern, auch bei nur einer Anweisung im Block. Das gilt ebenso für Methoden — insbesondere Methoden, deren Körper ein `when` ist: Block-Body mit `return when (...) { ... }`, nie Expression-Body (`= when (...) { ... }`).
 4. `if` als mehrzeiliger Expression-Body/Value-Provider (`val x = if (cond) { a } else { b }`) ist erlaubt, solange jeder Zweig durch geschweifte Klammern klar abgegrenzt bleibt (Regel 3). Verboten bleibt die inline-Ternary-Form (`if (cond) a else b`) — die versteckt die Fallunterscheidung in einer Zeile statt sie sichtbar über Zweige zu strukturieren.
 5. In String-Templates (`${...}`) steht kein Code außer einfachen Werten oder Methoden-/Property-Aufrufen — keine eingebettete Logik wie `if`/`else`. Eine solche Fallunterscheidung wird vorher in einer Variable berechnet (siehe Regel 4) und nur die Variable im Template verwendet.
-6. Klassen injecten ihre Abhängigkeiten vorrangig über den Konstruktor — klassisches Constructor Injection wie man es aus Quarkus oder Spring kennt, nur dass wir uns um das Injecten und die Konstruktoren selbst kümmern müssen (kein DI-Framework). Insbesondere Klassen, die mit externen Systemen sprechen, müssen das unterstützen, damit Tests Container-Koordinaten o.ä. übergeben können.
+6. Klassen injecten ihre Abhängigkeiten vorrangig über den Konstruktor — klassisches Constructor Injection wie man es aus Quarkus oder Spring kennt, nur dass wir uns um das Injecten und die Konstruktoren selbst kümmern müssen (kein DI-Framework). Insbesondere Klassen, die mit externen Systemen sprechen, müssen das unterstützen, damit Tests Container-Koordinaten o.ä. übergeben können. Ausnahme: Klassen, die vom UNO-Framework selbst per Reflection mit fest vorgegebener Konstruktor-Signatur instanziiert werden (z.B. `OptionsHandler`, `LibreKollabPlugin` über `FactoryHelper.createComponentFactory`/`__getComponentFactory`) — hier gibt es keine eigene Composition-Root-Stelle, die zusätzliche Abhängigkeiten von außen reinreichen könnte, daher ist eine Inline-Instanziierung einfacher Kollaboratoren dort in Ordnung.
 7. Keine `of()`-/Builder-Factory-Methoden für einfache Objekterzeugung — der Konstruktor (ggf. mit Default-Parametern, siehe Regel 22) ist genau dafür da.
 8. Keine Top-Level-Funktionen und keine Extension-Funktionen auf fremden Klassen. Jede Methode gehört zu einer selbst definierten Klasse — Methoden hängen sich nicht von außen an fremde Klassen an.
 9. Der Aufbau einer Klasse folgt immer demselben Muster, in dieser Reihenfolge: Attribute, innere Klassen (private Hilfs-Datenklassen o.ä.), Konstruktoren, Companion Object, öffentliche Methoden, private Methoden. Innere Klassen stehen also gebündelt oben, nicht verteilt direkt vor ihrer jeweiligen Nutzung.
@@ -26,7 +26,7 @@ Für alle Regeln gilt: der Entwickler kann im Einzelfall begründete Ausnahmen d
 ## DDD / Package rules
 
 17. `domain/` hat keine Imports aus `adapter/` — Domain-Model und Ports sind framework-agnostisch.
-18. Adapter importieren nur aus `domain/` und `domain/model/` — nie aus anderen Adaptern.
+18. Adapter importieren nur aus `domain/` und `domain/model/` — nie aus anderen Adaptern. Ausnahme: Utility-Klassen, deren fachliche Aufgabe explizit darin besteht, eine Information adapterübergreifend bereitzustellen (z.B. `LogDirResolver` — ermittelt das Log-Verzeichnis, damit andere Adapter es nutzen können). Für solche Klassen ist der adapterübergreifende Import Teil ihres Zwecks, keine Regelverletzung.
 19. `LibreKollabPlugin` ist die Composition Root: einziger Ort, der `LibreKollab` und `McpServer` instanziiert und verdrahtet.
 
 ## Kotlin style
@@ -39,5 +39,5 @@ Für alle Regeln gilt: der Entwickler kann im Einzelfall begründete Ausnahmen d
 
 ## I/O and concurrency
 
-25. UNO-Aufrufe werden über `limitedParallelism(1)` auf `Dispatchers.IO` in `CoreKollab` serialisiert — nie UNO aus mehreren Coroutines gleichzeitig aufrufen.
+25. UNO-Aufrufe werden über `limitedParallelism(1)` auf `Dispatchers.IO` in `LibreKollab` serialisiert — nie UNO aus mehreren Coroutines gleichzeitig aufrufen.
 26. `KollabAPI`-Funktionen sind `suspend` — Aufrufer müssen Coroutines oder `runBlocking` in Tests nutzen.

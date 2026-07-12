@@ -49,8 +49,9 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
     }
 
     override suspend fun getChapters(documentId: String): List<String> {
-        log.info("getChapters(documentId=$documentId)")
-        return delegate.getChapters(documentId)
+        val result = delegate.getChapters(documentId)
+        log.info("getChapters(documentId=$documentId) = ${result.size} chapters")
+        return result
     }
 
     override suspend fun getTextByPages(documentId: String, fromPage: Int, toPage: Int, changeStatus: ChangeStatus): MarkedText {
@@ -111,11 +112,10 @@ class LoggingKollabAPI(private val delegate: KollabAPI) : KollabAPI {
 
     override suspend fun getImage(documentId: String, imageId: String): Image? {
         val result = delegate.getImage(documentId, imageId)
-        val foundStatus: String
-        if (result != null) {
-            foundStatus = "found"
+        val foundStatus = if (result != null) {
+            "found"
         } else {
-            foundStatus = "not found"
+            "not found"
         }
         log.info("getImage(documentId=$documentId, imageId=$imageId) = $foundStatus")
         return result

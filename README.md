@@ -46,7 +46,7 @@ The extension runs inside LibreOffice's JVM — no external server, no Docker, n
 ./gradlew oxt
 ```
 
-The extension is written to `build/oxt/LibreKollab-1.0-SNAPSHOT.oxt`.
+The extension is written to `build/oxt/LibreKollab-1.0.0.oxt`.
 
 ### Install in LibreOffice
 

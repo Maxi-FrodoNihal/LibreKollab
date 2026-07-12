@@ -18,6 +18,7 @@ class TestKollab(
     companion object {
         private const val URL_RESOLVER_SERVICE = "com.sun.star.bridge.UnoUrlResolver"
         private const val BRIDGE_FACTORY_SERVICE = "com.sun.star.bridge.BridgeFactory"
+        private const val UNO_CONNECTION_URL_FORMAT = "uno:socket,host=%s,port=%d;urp;StarOffice.ComponentContext"
 
         fun viaSocket(host: String, port: Int, basePath: String, containerWorkspacePath: String): TestKollab {
             val localContext = Bootstrap.createInitialComponentContext(null)
@@ -25,7 +26,7 @@ class TestKollab(
                 XUnoUrlResolver::class.java,
                 localContext.serviceManager.createInstanceWithContext(URL_RESOLVER_SERVICE, localContext)
             )
-            val remoteInterface = urlResolver.resolve("uno:socket,host=$host,port=$port;urp;StarOffice.ComponentContext")
+            val remoteInterface = urlResolver.resolve(UNO_CONNECTION_URL_FORMAT.format(host, port))
             val bridge = requireNotNull(
                 UnoRuntime.queryInterface(
                     XBridgeFactory::class.java,

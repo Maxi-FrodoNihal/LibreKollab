@@ -25,6 +25,7 @@ org.msc.librekollab
 │   └── model/          # Comment, Change, ChangeAction, ChangeStatus, MarkedText, ...
 │       ├── anchor/      # TextAnchor, PageAnchor (composes a TextAnchor + page)
 │       ├── change/
+│       ├── id/          # IdGenerator (interface), HashIdGenerator — shared content-hash id computation
 │       ├── image/      # Image, ImageMeta
 │       └── text/
 │           └── properties/
@@ -88,7 +89,7 @@ Both `DocumentComponent` implementations are dispatcher-agnostic — neither wra
 
 ### UnoClient and shared feature components
 
-`UnoClient` (`adapter/libreoffice/`) holds generic UNO primitives that don't belong to any one feature: `enumerationSequence` (wraps a UNO `XEnumeration` as a Kotlin `Sequence`), `viewCursorOf`/`pageCursorOf`, `paragraphAt`, `resolveAnchorRange`, `buildTextAnchor`, and the `DateTime`↔`LocalDateTime` conversions `localDateTimeOf`/`unoDateTimeNow`. `LibreKollab` holds a `private val unoClient: UnoClient = UnoClient()` — `private`, not `protected`, since there's no subclass anymore needing access to it. `UnoClient` stays directly under `adapter/libreoffice/`, alongside `LibreKollab`/`ImageCache` — it isn't itself a feature component.
+`UnoClient` (`adapter/libreoffice/`) holds generic UNO primitives that don't belong to any one feature: `enumerationSequence` (wraps a UNO `XEnumeration` as a Kotlin `Sequence`), `paragraphsOf(textDoc)` (the `Sequence<Any>` of a document's paragraphs — centralizes what used to be `UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()` duplicated 7 times across `LibreKollab`/`UnoClient`/`TextComponent`/`SearchComponent`), `paragraphEnumerationOf(textDoc)` (the same lookup but returning the raw `XEnumeration`, not wrapped in a `Sequence` — needed by `TextComponent.getTextByChapter`'s deliberately imperative `while (hasMoreElements())` loop, which can't use a `Sequence`), `viewCursorOf`/`pageCursorOf`, `paragraphAt`, `resolveAnchorRange`, `buildTextAnchor`, and the `DateTime`↔`LocalDateTime` conversions `localDateTimeOf`/`unoDateTimeNow`. `LibreKollab` holds a `private val unoClient: UnoClient = UnoClient()` — `private`, not `protected`, since there's no subclass anymore needing access to it. `UnoClient` stays directly under `adapter/libreoffice/`, alongside `LibreKollab`/`ImageCache` — it isn't itself a feature component.
 
 Feature-specific UNO logic lives under `adapter/libreoffice/component/`, injected via constructor with a default (e.g. `CommentComponent(unoClient)`, `SearchComponent(unoClient)`, `TextComponent(unoClient)`, `RedlineComponent(unoClient)`, `ImageComponent(componentContext, unoClient)`), matching the project's constructor-injection convention. Each takes a `UnoClient` (and, where needed, other already-declared constructor params — `ImageComponent` additionally needs `componentContext` for `GraphicExportFilter`/service creation) and exposes plain (non-suspend) methods operating on an already-resolved `XTextDocument`, plus its own private helpers, feature-specific constants, and collaborators (e.g. `ImageComponent`'s own `ImageCache`). `LibreKollab`'s `KollabAPI` overrides just handle `withContext`/`withDocument`/`withDocumentMutating` and delegate the body to the relevant component.
 
@@ -102,7 +103,7 @@ Feature-specific UNO logic lives under `adapter/libreoffice/component/`, injecte
 
 ## OXT packaging
 
-The extension is built by `./gradlew oxt` → `build/oxt/LibreKollab-1.0-SNAPSHOT.oxt`.
+The extension is built by `./gradlew oxt` → `build/oxt/LibreKollab-1.0.0.oxt`.
 
 ```
 LibreKollab.oxt (ZIP)
@@ -125,14 +126,14 @@ LibreKollab.oxt (ZIP)
 - `running: AtomicBoolean` — `compareAndSet(false, true)` in `start()` prevents double-start
 - `engine: EmbeddedServer<*, *>?` — holds the running Ktor server
 - `instance: LibreKollabPlugin?` — stored in `init { instance = this }` so `OptionsHandler` can call `start()` / `close()`
-- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads `librekollab.port` system property (default `8080`), creates `LibreKollab` + `McpServer`, calls `startSse(port)`
+- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads and parses `librekollab.port` (default `8080`) to an `Int` *before* the `compareAndSet(false, true)` guard, so a non-numeric value (bypassing the dialog, e.g. an externally-set system property) throws before `running` is touched, instead of leaving it stuck at `true` with nothing actually started. Only then creates `LibreKollab` + `McpServer` and calls `startSse(port)`, wrapped in a `try/catch (IOException)` that resets `running` back to `false` before rethrowing — so a genuine bind failure (e.g. the port already in use by something else entirely) doesn't leave `running` stuck `true` with no server actually listening, mirroring the parse-failure fix above but for the bind step instead of the parse step.
 - `close()` — stops the engine, sets `engine = null`, resets `running` to `false`
 - `__getComponentFactory(implementationName)` — JVM static factory required by UNO; dispatches both `LibreKollabPlugin` and `OptionsHandler` by implementation name
 
 `OptionsHandler` implements `WeakBase() + XContainerWindowEventHandler + XServiceInfo`. Registered via `OptionsDialog.xcu`. `WeakBase` provides `XTypeProvider`/`XInterface` required for UNO marshalling.
 
 - `callHandlerMethod(window: XWindow, eventObject: Any, method: String)` — LibreOffice calls this for all dialog events:
-  - `"external_event"` — initialization lifecycle events. `AnyConverter.toString(eventObject)` yields `"initialize"`, `"back"`, or `"ok"`. `"initialize"`/`"back"` call `initialize()` (stores `XControlContainer`, sets `MultiLine=true` on status label, refreshes UI); `"ok"` saves the port value.
+  - `"external_event"` — initialization lifecycle events. `AnyConverter.toString(eventObject)` yields `"initialize"`, `"back"`, or `"ok"`. `"initialize"`/`"back"` call `initialize()` (stores `XControlContainer`, sets `MultiLine=true` on status label, refreshes UI); `"ok"` calls `savePort()`, which only persists the port field if it's non-empty *and* parses as an int (`toIntOrNull()`); an invalid value is silently ignored (logged at `warn`) rather than reaching `LibreKollabPlugin.start()`, where `toInt()` would otherwise throw *after* `running` had already flipped to `true`, leaving the plugin stuck thinking it's running when it isn't.
   - `"toggle"` — called directly when btnToggle fires (via `script:event` in XDL). Starts or stops the server.
   - `"openLog"` — called directly when btnOpenLog fires. Opens the log file via `java.awt.Desktop.open()` (falls back to the directory if the file does not exist yet).
 - `getSupportedMethodNames()` must return every method name routed to this handler: `["external_event", "toggle", "openLog"]`
@@ -156,11 +157,11 @@ The Options dialog is embedded in LibreOffice's Options tree — not a floating 
 
 ## Edit mode / Track Changes
 
-`withEnsuredEditMode(documentId)` checks `RecordChanges` and enables it if needed. Used **exclusively for `editText`**.
+`LibreKollab.editText()` calls the private `ensureEditModeOn(textDoc)` inline, on the already-resolved `textDoc`, before delegating to `textComponent.editText()` — both run inside the same single `withContext(libreOfficeDispatcher)`/`withDocumentMutating` block as the edit itself, so the RecordChanges check-and-enable and the edit are atomic with respect to the serialized UNO dispatcher (Regel 25); no separate dispatch, and no other queued coroutine can interleave a `set_edit_mode`-style change in between. `ensureEditModeOn` is used **exclusively for `editText`**.
 
-Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEditMode` — LibreOffice does not track annotation changes in its redline system.
+Comments (`addComment`, `updateComment`, `deleteComment`) bypass `ensureEditModeOn` — LibreOffice does not track annotation changes in its redline system.
 
-`setEditMode` / `getEditMode` are on `KollabAPI` but `setEditMode` is only called implicitly by `withEnsuredEditMode` — not exposed as an MCP tool.
+`setEditMode` / `getEditMode` are on `KollabAPI` — `getEditMode` backs the `get_edit_mode` MCP tool; `setEditMode` exists on the interface but isn't called by `editText` anymore (superseded by the inline `ensureEditModeOn`) and isn't itself exposed as an MCP tool.
 
 ## Track Changes model
 
@@ -180,7 +181,7 @@ Comments (`addComment`, `updateComment`, `deleteComment`) bypass `withEnsuredEdi
 
 `ImageMeta(imageId, width, height, sizeMb, page, textAnchor)` — lightweight descriptor returned by `getImageMetas`. `width`/`height` are in 1/100 mm (LibreOffice native unit). `sizeMb` reflects the Base64-encoded size `get_image` will actually transmit, not the raw PNG size — computed via the exact `4 * ceil(n / 3)` Base64 length formula in `ImageComponent.base64EncodedByteCount()` (no actual encoding happens in the domain), so callers get an honest number to decide upfront whether to request a downscaled `get_image` call.
 
-`Image(bytes, width, height, textAnchor, id)` — full image returned by `getImage`. `bytes` is the raw PNG data; Base64 encoding only happens at the MCP boundary in `McpServer`, never in the domain. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor. The `get_image` MCP tool returns this as a native `ImageContent` block (not JSON text) and accepts an optional `scale` argument (0 exclusive–1 inclusive) to downscale the PNG in `McpServer` before Base64-encoding it — the domain layer always exports at original resolution.
+`Image(bytes, width, height, textAnchor, id)` — full image returned by `getImage`. `bytes` is the raw PNG data; Base64 encoding only happens at the MCP boundary in `McpServer`, never in the domain. `id` is a 12-char SHA-256 of the raw PNG bytes + dimensions + anchor, computed via `HashIdGenerator` (see "Id generation" below). The `get_image` MCP tool returns this as a native `ImageContent` block (not JSON text) and accepts an optional `scale` argument (0 exclusive–1 inclusive) to downscale the PNG in `McpServer` before Base64-encoding it — the domain layer always exports at original resolution.
 
 Implementation in `ImageComponent` (`adapter/libreoffice/component/`, see "UnoClient and feature components" above):
 - `XTextGraphicObjectsSupplier.getGraphicObjects()` enumerates all embedded images by name.
@@ -191,9 +192,17 @@ Implementation in `ImageComponent` (`adapter/libreoffice/component/`, see "UnoCl
 
 `ImageComponent.cachedImageOf()` calls `getByShape()` (index lookup, then `byId` lookup) first; only a full miss triggers `imageOf()` (the actual UNO export), after which `put()` populates both `byId` and `shapeToId`. `LibreKollab.getImage()` additionally calls `imageComponent.getCachedImage(imageId)` directly up front, before calling into `withDocument` at all, for the case where the caller already has an `imageId` from a prior response — since that lookup needs only the `imageId`, not a resolved `XTextDocument`, it can run ahead of any UNO access. A changed image in the document produces a different content-hash id, so a stale entry is simply never looked up again and ages out via the weight/access bounds — no explicit invalidation needed. `ImageCache` is entirely private to `ImageComponent` (`imageCache: ImageCache = ImageCache()`) — `LibreKollab` doesn't hold a reference to it at all, only to `ImageComponent`.
 
+## Id generation
+
+`IdGenerator` (`domain/model/id/`, interface) + `HashIdGenerator` (the sole implementation, a stateless `object`) centralize the SHA-256/hex/truncate-to-12-chars mechanics shared by every content-hash id in the domain: `IdGenerator.generate(bytes: ByteArray): String`. Each data class still builds its own key (the fields vary per class) and passes only the resulting bytes to `HashIdGenerator.generate(...)` as a default parameter expression — `data class` primary constructors require every parameter to be a `val`/`var` property, so a truly injected generator isn't possible here without polluting `equals`/`hashCode`/`toString`; the interface exists so the hashing mechanics stay swappable (e.g. a future UUID-based implementation) even though callers reference `HashIdGenerator` directly by name.
+
+- `TextAnchor.id` — SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"`.
+- `Image.id` — SHA-256 of the raw PNG bytes + `":$width:$height:${textAnchor.id}"`.
+- `Comment.id` — SHA-256 of `"${anchor.id}:$author"`. Deliberately excludes `content`/`dateTime` (both change on `updateComment`, and the id must survive an update) and deliberately includes `author` (not just `anchor.id`) so two different reviewers commenting on the exact same text range get distinct ids — `CommentComponent.findCommentField()` matches by rebuilding the full `Comment` and comparing `.id`. The one remaining edge case — the *same* author commenting the exact same anchor twice — still collides; accepted as an unlikely corner case rather than adding a persisted per-comment UUID.
+
 ## Comments (UNO annotations)
 
-`TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (12-char SHA-256 of `"$text:$paragraphIndex:$charStart:$charEnd"`).
+`TextAnchor` — domain PK for a text position: `text`, `paragraphIndex`, `charStart`, `charEnd`, `id` (see "Id generation" above).
 
 `Comment` — `id`, `anchor`, `author`, `content`, `dateTime: LocalDateTime`.
 
@@ -220,7 +229,7 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 | `get_text_by_chapter` | `documentId`, `chapter` | `changeStatus` |
 | `get_changes` | `documentId` | — |
 | `get_edit_mode` | `documentId` | — |
-| `edit_text` | `documentId`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd`, `newText` | `newTextProperties` |
+| `edit_text` | `documentId`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd`, `newText` | `newTextProperties`, `author` |
 | `get_comments` | `documentId` | — |
 | `get_comment` | `documentId`, `commentId` | — |
 | `add_comment` | `documentId`, `commentText`, `author`, `anchorText`, `anchorParagraphIndex`, `anchorCharStart`, `anchorCharEnd` | — |
@@ -229,6 +238,8 @@ Updating/deleting: enumerate fields, match by anchor id; throws `NoSuchElementEx
 | `get_image_metas` | `documentId` | — |
 | `get_image` | `documentId`, `imageId` | `scale` |
 | `search` | `documentId`, `searchText` | `page`, `size` |
+
+`get_comment`/`get_image` on an unknown `commentId`/`imageId` return `CallToolResult(content = listOf(TextContent("not found")), isError = true)` — an actual tool error, not a plain text result — consistent with `update_comment`/`delete_comment` on an unknown `commentId` (which already surface as tool errors via an uncaught `NoSuchElementException` hitting the MCP SDK's own catch-all). A caller checks `isError`, not the text, to detect "not found".
 
 ## Logging
 
@@ -256,6 +267,10 @@ Modern LibreOffice (≥7.x) consolidated all UNO classes into this single JAR. T
 
 `McpServerIT` — starts a real LibreOffice container (Testcontainers), creates a `TestKollab` via `viaSocket`, and drives the full MCP tool surface over an in-process stdio connection. Test documents are written directly to a shared workspace directory that is bind-mounted into the container.
 
+`LibreDocumentComponentTest` — a plain JVM unit test (no Testcontainers, no LibreOffice) covering `LibreDocumentComponent` specifically, using MockK to mock the UNO interfaces it talks to (`XDesktop`, `XEnumerationAccess`/`XEnumeration`, `XTextDocument`, `XMultiComponentFactory`, `XComponentContext`). This works because `LibreDocumentComponent` only enumerates already-open documents via `XDesktop` and compares URLs as strings — it never touches the filesystem — and `UnoRuntime.queryInterface(Type, obj)` returns `obj` as-is once `Type.isInstance(obj)` already holds (verified against the decompiled bytecode), so a mock that directly implements the target interface satisfies it without any bridge/proxy involved. This is the model for unit-testing other UNO-adjacent components that don't need a live LibreOffice — reach for a Testcontainers-based `McpServerIT` case only when the behavior genuinely depends on real LibreOffice document/redline internals. MockK (`io.mockk:mockk`) is a `testImplementation` dependency; `tasks.test` passes `-XX:+EnableDynamicAgentLoading` so its ByteBuddy-based mocking doesn't print a JDK dynamic-agent-loading warning on every run.
+
+`ImageScalerTest` (`domain/model/image/`) — the first (and so far only) pure domain-logic unit test in the project; no UNO/MockK involved at all, just plain JVM `BufferedImage`/`ImageIO` round-trips. Covers `ImageScaler.scale()`'s factor boundaries (`0`, negative, `>1`, `1.0`), a corrupt/undecodable input, and the `coerceAtLeast(1)` pixel floor for very small scale factors.
+
 The LibreOffice container uses a fixed image name (`librekollab-libreoffice-test:latest`, `deleteOnExit=false`). Docker image is built from `docker/libreoffice/Dockerfile`.
 
 Testcontainers 2.0.5 is required for Docker 29.x compatibility (`junit-jupiter` artifact, not the old `junit-5`).
@@ -270,7 +285,7 @@ For manual plugin testing: build the OXT, install it in a local LibreOffice, sta
 
 ```bash
 ./gradlew oxt
-# → build/oxt/LibreKollab-1.0-SNAPSHOT.oxt
+# → build/oxt/LibreKollab-1.0.0.oxt
 ```
 
 Install via `Extras > Extension Manager > Add...`, restart LibreOffice, then open the Options dialog (`Extras > Optionen > Internet > MCP Server`) and click **Start server**.

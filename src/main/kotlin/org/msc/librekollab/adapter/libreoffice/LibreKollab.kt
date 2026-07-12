@@ -1,7 +1,6 @@
 package org.msc.librekollab.adapter.libreoffice
 
 import com.sun.star.beans.XPropertySet
-import com.sun.star.container.XEnumerationAccess
 import com.sun.star.text.XPageCursor
 import com.sun.star.text.XTextDocument
 import com.sun.star.uno.UnoRuntime
@@ -59,21 +58,18 @@ open class LibreKollab(
     override suspend fun getChanges(documentId: String): List<Change> =
         withContext(libreOfficeDispatcher) {
             withDocument(documentId) { textDoc ->
-                val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text)
-                    .createEnumeration()
-                unoClient.enumerationSequence(paragraphs)
+                unoClient.paragraphsOf(textDoc)
                     .flatMapIndexed { paragraphIdx, para -> redlineComponent.changesInParagraph(para, paragraphIdx) }
                     .toList()
             }
         }
 
     override suspend fun editText(documentId: String, anchor: TextAnchor, newText: MarkedText, author: String) {
-        withEnsuredEditMode(documentId) {
-            withContext(libreOfficeDispatcher) {
-                withDocumentMutating(documentId) { textDoc ->
-                    authorComponent.withAuthor(author) {
-                        textComponent.editText(textDoc, anchor, newText)
-                    }
+        withContext(libreOfficeDispatcher) {
+            withDocumentMutating(documentId) { textDoc ->
+                ensureEditModeOn(textDoc)
+                authorComponent.withAuthor(author) {
+                    textComponent.editText(textDoc, anchor, newText)
                 }
             }
         }
@@ -101,10 +97,12 @@ open class LibreKollab(
             withDocument(documentId) { textDoc -> textComponent.getTextByChapter(textDoc, chapter, changeStatus) }
         }
 
-    override suspend fun setEditMode(documentId: String, editMode: Boolean): Unit = withContext(libreOfficeDispatcher) {
-        withDocumentMutating(documentId) { textDoc ->
-            UnoRuntime.queryInterface(XPropertySet::class.java, textDoc)
-                .setPropertyValue(RECORD_CHANGES_PROPERTY, editMode)
+    override suspend fun setEditMode(documentId: String, editMode: Boolean) {
+        withContext(libreOfficeDispatcher) {
+            withDocumentMutating(documentId) { textDoc ->
+                UnoRuntime.queryInterface(XPropertySet::class.java, textDoc)
+                    .setPropertyValue(RECORD_CHANGES_PROPERTY, editMode)
+            }
         }
     }
 
@@ -122,19 +120,21 @@ open class LibreKollab(
     override suspend fun getComment(documentId: String, commentId: String): Comment? =
         getComments(documentId).find { it.id == commentId }
 
-    override suspend fun updateComment(documentId: String, commentId: String, newText: String): Unit =
+    override suspend fun updateComment(documentId: String, commentId: String, newText: String) {
         withContext(libreOfficeDispatcher) {
             withDocumentMutating(documentId) { textDoc ->
                 commentComponent.updateComment(textDoc, documentId, commentId, newText)
             }
         }
+    }
 
-    override suspend fun deleteComment(documentId: String, commentId: String): Unit =
+    override suspend fun deleteComment(documentId: String, commentId: String) {
         withContext(libreOfficeDispatcher) {
             withDocumentMutating(documentId) { textDoc ->
                 commentComponent.deleteComment(textDoc, documentId, commentId)
             }
         }
+    }
 
     override suspend fun addComment(documentId: String, commentText: String, author: String, anchor: TextAnchor) {
         withContext(libreOfficeDispatcher) {
@@ -163,11 +163,11 @@ open class LibreKollab(
         }
     }
 
-    private suspend fun withEnsuredEditMode(documentId: String, block: suspend () -> Unit) {
-        if (!getEditMode(documentId)){
-            setEditMode(documentId, true)
+    private fun ensureEditModeOn(textDoc: XTextDocument) {
+        val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, textDoc)
+        if (propSet.getPropertyValue(RECORD_CHANGES_PROPERTY) != true) {
+            propSet.setPropertyValue(RECORD_CHANGES_PROPERTY, true)
         }
-        block()
     }
 
     private suspend fun <T> withDocument(documentId: String, block: (XTextDocument) -> T): T =

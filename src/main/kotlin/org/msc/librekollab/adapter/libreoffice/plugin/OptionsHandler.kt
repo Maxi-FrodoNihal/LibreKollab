@@ -24,6 +24,8 @@ import java.io.File
 class OptionsHandler(private val context: XComponentContext) :
     WeakBase(), XContainerWindowEventHandler, XServiceInfo {
 
+    private var container: XControlContainer? = null
+
     companion object {
         const val SERVICE_NAME = "org.msc.librekollab.OptionsHandler"
         const val IMPLEMENTATION_NAME = "org.msc.librekollab.adapter.libreoffice.plugin.OptionsHandler"
@@ -36,6 +38,12 @@ class OptionsHandler(private val context: XComponentContext) :
         private const val CONTROL_PORT_TEXT = "txtPort"
         private const val CONTROL_TOGGLE_BUTTON = "btnToggle"
 
+        private const val EVENT_INITIALIZE = "initialize"
+        private const val EVENT_BACK = "back"
+        private const val EVENT_OK = "ok"
+
+        private const val MULTI_LINE_PROPERTY = "MultiLine"
+
         private val log = LoggerFactory.getLogger(OptionsHandler::class.java)
 
         @JvmStatic
@@ -47,8 +55,6 @@ class OptionsHandler(private val context: XComponentContext) :
             return null
         }
     }
-
-    private var container: XControlContainer? = null
 
     override fun callHandlerMethod(window: XWindow, eventObject: Any, method: String): Boolean {
         log.info("callHandlerMethod: {}", method)
@@ -76,8 +82,8 @@ class OptionsHandler(private val context: XComponentContext) :
         log.info("external_event: {}", event)
         container = UnoRuntime.queryInterface(XControlContainer::class.java, window)
         return when (event) {
-            "initialize", "back" -> { initialize(); true }
-            "ok" -> { savePort(); true }
+            EVENT_INITIALIZE, EVENT_BACK -> { initialize(); true }
+            EVENT_OK -> { savePort(); true }
             else -> false
         }
     }
@@ -86,7 +92,7 @@ class OptionsHandler(private val context: XComponentContext) :
         val c = container ?: return
         val statusModel = UnoRuntime.queryInterface(XPropertySet::class.java,
             UnoRuntime.queryInterface(XControl::class.java, c.getControl(CONTROL_STATUS_LABEL)).getModel())
-        statusModel.setPropertyValue("MultiLine", true)
+        statusModel.setPropertyValue(MULTI_LINE_PROPERTY, true)
         updateUI(c)
     }
 
@@ -103,24 +109,27 @@ class OptionsHandler(private val context: XComponentContext) :
 
     private fun savePort() {
         val port = text(container ?: return, CONTROL_PORT_TEXT).getText().trim()
-        if (port.isNotEmpty()) {
-            System.setProperty(LibreKollabPlugin.PORT_PROPERTY, port)
+        if (port.isEmpty()) {
+            return
         }
+        if (port.toIntOrNull() == null) {
+            log.warn("Ignoring invalid port value: {}", port)
+            return
+        }
+        System.setProperty(LibreKollabPlugin.PORT_PROPERTY, port)
     }
 
     private fun updateUI(c: XControlContainer) {
         val isRunning = LibreKollabPlugin.isRunning()
-        val statusText: String
-        if (isRunning) {
-            statusText = "Status:\nserver is running on port ${currentPort()}"
+        val statusText = if (isRunning) {
+            "Status:\nserver is running on port ${currentPort()}"
         } else {
-            statusText = "Status:\nserver is stopped"
+            "Status:\nserver is stopped"
         }
-        val toggleLabel: String
-        if (isRunning) {
-            toggleLabel = "Stop server"
+        val toggleLabel = if (isRunning) {
+            "Stop server"
         } else {
-            toggleLabel = "Start server"
+            "Start server"
         }
         label(c, CONTROL_STATUS_LABEL).setText(statusText)
         text(c, CONTROL_PORT_TEXT).setText(currentPort())

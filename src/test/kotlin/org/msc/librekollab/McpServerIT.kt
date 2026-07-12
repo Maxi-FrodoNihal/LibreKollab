@@ -707,14 +707,15 @@ class McpServerIT {
     }
 
     @Test
-    fun `T27 get_comment returns not-found text for an unknown id`() {
+    fun `T27 get_comment returns a not-found tool error for an unknown id`() {
         runBlocking {
             val documentId = upload("test_hallo.odt")
-            val result = tool("get_comment", buildJsonObject {
+            val result = sharedClient.callTool("get_comment", buildJsonObject {
                 put("documentId", documentId)
                 put("commentId", "does-not-exist")
             })
-            assertThat(result).isEqualTo("not found")
+            assertThat(result.isError).isEqualTo(true)
+            assertThat((result.content.first() as TextContent).text).isEqualTo("not found")
         }
     }
 
@@ -773,6 +774,29 @@ class McpServerIT {
             })
             assertThat(result.isError).isEqualTo(true)
             assertThat((result.content.first() as TextContent).text).contains("Paragraph index 999 not found")
+        }
+    }
+
+    @Test
+    fun `T31 get_image with an unknown imageId returns a not-found tool error`() {
+        runBlocking {
+            val documentId = upload("test_with_image.odt")
+            val result = sharedClient.callTool("get_image", buildJsonObject {
+                put("documentId", documentId)
+                put("imageId", "does-not-exist")
+            })
+            assertThat(result.isError).isEqualTo(true)
+            assertThat((result.content.first() as TextContent).text).isEqualTo("not found")
+        }
+    }
+
+    @Test
+    fun `T32 get_text with an unknown documentId returns a tool error`() {
+        runBlocking {
+            val result = sharedClient.callTool("get_text", buildJsonObject {
+                put("documentId", "does-not-exist.odt")
+            })
+            assertThat(result.isError).isEqualTo(true)
         }
     }
 }

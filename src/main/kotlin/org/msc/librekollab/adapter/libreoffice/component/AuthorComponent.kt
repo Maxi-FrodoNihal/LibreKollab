@@ -2,6 +2,7 @@ package org.msc.librekollab.adapter.libreoffice.component
 
 import com.sun.star.beans.PropertyValue
 import com.sun.star.beans.XPropertySet
+import com.sun.star.lang.XComponent
 import com.sun.star.lang.XMultiServiceFactory
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
@@ -32,6 +33,7 @@ class AuthorComponent(private val componentContext: XComponentContext) {
             block()
         } finally {
             setProfileName(access, oldFirst, oldLast)
+            UnoRuntime.queryInterface(XComponent::class.java, access)?.dispose()
         }
     }
 

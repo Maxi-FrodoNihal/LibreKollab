@@ -65,10 +65,7 @@ class CommentComponent(private val unoClient: UnoClient) {
     }
 
     private fun findCommentField(textDoc: XTextDocument, commentId: String): Any? =
-        commentFields(textDoc).firstOrNull { field ->
-            val anchorRange = UnoRuntime.queryInterface(XTextContent::class.java, field).anchor
-            unoClient.buildTextAnchor(textDoc, anchorRange).id == commentId
-        }
+        commentFields(textDoc).firstOrNull { field -> commentOf(textDoc, field).id == commentId }
 
     private fun commentOf(textDoc: XTextDocument, field: Any): Comment {
         val propSet = UnoRuntime.queryInterface(XPropertySet::class.java, field)

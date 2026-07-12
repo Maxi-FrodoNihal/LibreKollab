@@ -1,6 +1,5 @@
 package org.msc.librekollab.adapter.libreoffice.component
 
-import com.sun.star.container.XEnumerationAccess
 import com.sun.star.text.XPageCursor
 import com.sun.star.text.XTextDocument
 import com.sun.star.text.XTextRange
@@ -22,8 +21,7 @@ class SearchComponent(private val unoClient: UnoClient) {
     ): SearchResult {
         val vc = unoClient.viewCursorOf(textDoc)
         val pc = unoClient.pageCursorOf(textDoc)
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        val allFindings = unoClient.enumerationSequence(paragraphs)
+        val allFindings = unoClient.paragraphsOf(textDoc)
             .mapIndexed { idx, para -> matchesInParagraph(para, idx, searchText, vc, pc, paragraphTextOf) }
             .flatten()
             .toList()

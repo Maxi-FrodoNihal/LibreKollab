@@ -12,7 +12,7 @@ import org.msc.librekollab.domain.model.text.MarkedText
 /**
  * Central port of LibreKollab. Exposes LibreOffice document editing as MCP tools over SSE.
  *
- * Build: ./gradlew oxt  →  build/oxt/LibreKollab-1.0-SNAPSHOT.oxt
+ * Build: ./gradlew oxt  →  build/oxt/LibreKollab-1.0.0.oxt
  */
 interface KollabAPI {
     companion object {

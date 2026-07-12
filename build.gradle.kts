@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.msc.librekollab"
-version = "1.0-SNAPSHOT"
+version = "1.0.0"
 
 kotlin {
     jvmToolchain(25)
@@ -35,6 +35,7 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter:$testcontainersVersion")
     testImplementation("org.assertj:assertj-core:3.27.7")
+    testImplementation("io.mockk:mockk:1.14.11")
 }
 
 val fatJar by tasks.registering(Jar::class) {
@@ -71,4 +72,5 @@ val oxt by tasks.registering(Zip::class) {
 
 tasks.test {
     useJUnitPlatform()
+    jvmArgs("-XX:+EnableDynamicAgentLoading")
 }

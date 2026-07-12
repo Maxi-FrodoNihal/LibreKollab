@@ -20,10 +20,12 @@ class ImageScaler {
         val targetWidth = (original.width * factor).toInt().coerceAtLeast(1)
         val targetHeight = (original.height * factor).toInt().coerceAtLeast(1)
         val scaled = BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB)
-        scaled.createGraphics().apply {
-            setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-            drawImage(original, 0, 0, targetWidth, targetHeight, null)
-            dispose()
+        val graphics = scaled.createGraphics()
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            graphics.drawImage(original, 0, 0, targetWidth, targetHeight, null)
+        } finally {
+            graphics.dispose()
         }
         val out = ByteArrayOutputStream()
         ImageIO.write(scaled, PNG_FORMAT, out)

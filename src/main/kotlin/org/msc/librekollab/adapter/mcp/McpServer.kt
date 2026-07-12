@@ -51,6 +51,7 @@ class McpServer(
 
     companion object {
         private const val LOCALHOST_HOST = "127.0.0.1"
+        private const val PNG_MIME_TYPE = "image/png"
     }
 
     fun startSse(port: Int): EmbeddedServer<*, *> {
@@ -260,8 +261,8 @@ class McpServer(
 
     private suspend fun getComment(request: DocumentAndCommentIdRequest): CallToolResult {
         val comment = kollab.getComment(request.documentId, request.commentId)
-        val commentJson = comment?.let { Json.encodeToString(Comment.serializer(), it) } ?: "not found"
-        return CallToolResult(content = listOf(TextContent(commentJson)))
+            ?: return CallToolResult(content = listOf(TextContent("not found")), isError = true)
+        return CallToolResult(content = listOf(TextContent(Json.encodeToString(Comment.serializer(), comment))))
     }
 
     private suspend fun addComment(request: AddCommentRequest): CallToolResult {
@@ -298,9 +299,9 @@ class McpServer(
 
     private suspend fun getImage(request: GetImageRequest): CallToolResult {
         val bytes = prepareImage(request.documentId, request.imageId, request.scale)
-            ?: return CallToolResult(content = listOf(TextContent("not found")))
+            ?: return CallToolResult(content = listOf(TextContent("not found")), isError = true)
         return CallToolResult(content = listOf(
-            ImageContent(data = Base64.getEncoder().encodeToString(bytes), mimeType = "image/png")
+            ImageContent(data = Base64.getEncoder().encodeToString(bytes), mimeType = PNG_MIME_TYPE)
         ))
     }
 

@@ -19,6 +19,11 @@ class UnoClient {
     fun enumerationSequence(enumeration: XEnumeration): Sequence<Any> =
         generateSequence { if (enumeration.hasMoreElements()) enumeration.nextElement() else null }
 
+    fun paragraphsOf(textDoc: XTextDocument): Sequence<Any> = enumerationSequence(paragraphEnumerationOf(textDoc))
+
+    fun paragraphEnumerationOf(textDoc: XTextDocument): XEnumeration =
+        UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
+
     fun viewCursorOf(textDoc: XTextDocument): XTextViewCursor {
         val model = UnoRuntime.queryInterface(XModel::class.java, textDoc)
         val vcSupplier = UnoRuntime.queryInterface(XTextViewCursorSupplier::class.java, model.currentController)
@@ -28,11 +33,9 @@ class UnoClient {
     fun pageCursorOf(textDoc: XTextDocument): XPageCursor =
         UnoRuntime.queryInterface(XPageCursor::class.java, viewCursorOf(textDoc))
 
-    fun paragraphAt(textDoc: XTextDocument, index: Int): Any {
-        val paragraphs = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        return enumerationSequence(paragraphs).elementAtOrNull(index)
+    fun paragraphAt(textDoc: XTextDocument, index: Int): Any =
+        paragraphsOf(textDoc).elementAtOrNull(index)
             ?: throw IllegalArgumentException("Paragraph index $index not found in document")
-    }
 
     fun resolveAnchorRange(textDoc: XTextDocument, anchor: TextAnchor): XTextRange {
         val para = paragraphAt(textDoc, anchor.paragraphIndex)
@@ -45,8 +48,7 @@ class UnoClient {
 
     fun buildTextAnchor(textDoc: XTextDocument, anchorRange: XTextRange): TextAnchor {
         val compare = UnoRuntime.queryInterface(XTextRangeCompare::class.java, textDoc.text)
-        val paraEnum = UnoRuntime.queryInterface(XEnumerationAccess::class.java, textDoc.text).createEnumeration()
-        val paragraphList = enumerationSequence(paraEnum)
+        val paragraphList = paragraphsOf(textDoc)
             .map { UnoRuntime.queryInterface(XTextRange::class.java, it) }
             .toList()
 

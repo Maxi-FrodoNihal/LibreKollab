@@ -11,6 +11,7 @@ import org.msc.librekollab.adapter.logging.LoggingKollabAPI
 import org.msc.librekollab.adapter.mcp.McpServer
 import org.msc.librekollab.adapter.libreoffice.LibreKollab
 import org.slf4j.LoggerFactory
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LibreKollabPlugin(private val context: XComponentContext) : XJob, XServiceInfo {
@@ -35,11 +36,16 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
 
         fun start() {
             val inst = instance ?: return
+            val port = System.getProperty(PORT_PROPERTY, DEFAULT_PORT.toString()).toInt()
             if (running.compareAndSet(false, true)) {
-                val port = System.getProperty(PORT_PROPERTY, DEFAULT_PORT.toString()).toInt()
                 log.info("Starting MCP server on port {}", port)
                 val kollab = LoggingKollabAPI(LibreKollab(inst.context))
-                engine = McpServer(kollab).startSse(port)
+                try {
+                    engine = McpServer(kollab).startSse(port)
+                } catch (e: IOException) {
+                    running.set(false)
+                    throw e
+                }
                 log.info("MCP server started on port {}", port)
             }
         }
