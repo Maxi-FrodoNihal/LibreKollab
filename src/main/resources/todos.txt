@@ -1,4 +1,2 @@
 Tabellen? -> gemeinsamer domain container
 Nummerierung und Aufzählungen
-
-image meta cache

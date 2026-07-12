@@ -53,6 +53,7 @@ import java.io.PipedOutputStream
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.UUID
+import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 
 @Testcontainers
@@ -654,6 +655,33 @@ class McpServerIT {
             val result = Json.decodeFromString(SearchResult.serializer(), json)
             assertThat(result.totalFindings).isEqualTo(4)
             assertThat(result.elements).allMatch { it.textAnchor.text == "Das ist ein" }
+        }
+    }
+
+    @Test
+    fun `T25 get_image is faster once its bytes are already cached`() {
+        runBlocking {
+            val documentId = upload("test_with_image.odt")
+
+            lateinit var metasJson: String
+            val metasElapsedMs = measureTimeMillis {
+                metasJson = tool("get_image_metas", buildJsonObject { put("documentId", documentId) })
+            }
+            val metas = Json.decodeFromString(ListSerializer(ImageMeta.serializer()), metasJson)
+            val imageId = metas.first { it.width == 17000 && it.height == 13605 }.imageId
+
+            val getImageElapsedMs = measureTimeMillis {
+                sharedClient.callTool("get_image", buildJsonObject {
+                    put("documentId", documentId)
+                    put("imageId", imageId)
+                })
+            }
+
+            // get_image_metas always exports fresh (it populates the cache, but never reads from it),
+            // so it pays the full PNG-export cost. get_image checks the cache first, so once metas has
+            // already seen this image, fetching it again should be a cheap in-memory lookup instead of
+            // another round-trip through GraphicExportFilter.
+            assertThat(getImageElapsedMs).isLessThan(metasElapsedMs)
         }
     }
 }

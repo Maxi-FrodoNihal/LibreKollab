@@ -29,6 +29,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
     implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.2.4")
 
     testImplementation(kotlin("test"))
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
