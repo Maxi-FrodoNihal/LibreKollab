@@ -140,7 +140,7 @@ class McpServer(
 
         server.addTool(
             name = "edit_text",
-            description = "Replace a text range in a document. Changes are tracked. Anchor only the exact range you want to replace — not the surrounding paragraph. anchorCharStart/anchorCharEnd are 0-based character offsets into the paragraph, where the paragraph's length itself denotes the position right after its last character (e.g. a 113-character paragraph ends at position 113, not 112). For a pure insertion (no deletion), set anchorCharStart == anchorCharEnd at the insertion point — use the paragraph's length to insert at its end — and provide only the new text as newText. The anchor range will be deleted and replaced by newText.",
+            description = "Replace a text range in a document; the anchor range is deleted and replaced by newText, and the change is tracked. Anchor only the exact range to replace, not the surrounding paragraph. anchorCharStart/anchorCharEnd are 0-based character offsets into the paragraph — the paragraph's length itself is a valid end position (e.g. a 113-character paragraph ends at 113, not 112). For a pure insertion, set anchorCharStart == anchorCharEnd (use the paragraph's length to insert at its end) and give only newText. Editing a paragraph shifts every later offset within it, so an anchor computed beforehand is stale afterward — re-fetch it (e.g. via search or get_text) before a second edit to an already-edited paragraph, rather than reusing an old offset.",
             inputSchema = schemaGenerator.schemaOf(EditTextRequest.serializer())
         ) { editText(parseArgs<EditTextRequest>(it.params.arguments as JsonObject)) }
 

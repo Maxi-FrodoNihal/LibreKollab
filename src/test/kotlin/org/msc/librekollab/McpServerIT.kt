@@ -811,4 +811,80 @@ class McpServerIT {
             assertThat(result.isError).isEqualTo(true)
         }
     }
+
+    @Test
+    fun `T33 edit_text replaces a mid-paragraph range without corrupting the text that follows it`() {
+        // Regression test: unlike T03 (anchorCharStart == 0), this anchor starts mid-paragraph with
+        // trailing content after it ("Welt"). insertFormattedText builds its insertion cursor from the
+        // paragraph start and moves it right by anchor.charEnd — if that math is off, characters from
+        // around the anchor boundary leak into the wrong place instead of a clean "Hallo Tests!! Welt".
+        runBlocking {
+            val documentId = upload("test_hallo.odt")
+
+            // "Hallo test" -> "Hallo test Welt" (pure insert at the end, charStart == charEnd)
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "test")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 10)
+                put("anchorCharEnd", 10)
+                put("newText", " Welt")
+            })
+
+            // Replace "test" (charStart = 6, mid-paragraph) with a longer word, "Welt" trailing after it
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "test")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 6)
+                put("anchorCharEnd", 10)
+                put("newText", "Tests!!")
+            })
+
+            val after = Json.decodeFromString(MarkedText.serializer(), tool("get_text", buildJsonObject {
+                put("documentId", documentId)
+                put("changeStatus", "AFTER")
+            }))
+            assertThat(after.text.trim()).isEqualTo("Hallo Tests!! Welt")
+        }
+    }
+
+    @Test
+    fun `T34 edit_text fixes a typo deep in a long paragraph with preceding umlauts without duplicating words`() {
+        // Reproduces a real-manuscript corruption: a single-word typo fix ("Auschnitt" -> "Ausschnitt")
+        // at charStart 105 in a 235-char paragraph that has several umlauts (über, Vermutung) before the
+        // anchor. Live usage against a real, GUI-attached LibreOffice repeatedly left the last word of the
+        // old anchor duplicated right before the inserted text instead of a clean replacement.
+        runBlocking {
+            val documentId = upload("test_umlaut_paragraph.odt")
+
+            val before = Json.decodeFromString(MarkedText.serializer(), tool("get_text", buildJsonObject {
+                put("documentId", documentId)
+            }))
+            assertThat(before.text.trim()).isEqualTo(
+                "Lonn war im Begriff etwas zu sagen, er verkniff sich aber seine Vermutung über das Mal. " +
+                    "Er sah nur einen Auschnitt eines bedrohlichen Kunstwerks der Natur, welches sich mit " +
+                    "Sicherheit über weit mehr als nur den Oberschenkel erstreckte."
+            )
+
+            tool("edit_text", buildJsonObject {
+                put("documentId", documentId)
+                put("anchorText", "Auschnitt eines bedrohlichen")
+                put("anchorParagraphIndex", 0)
+                put("anchorCharStart", 105)
+                put("anchorCharEnd", 133)
+                put("newText", "Ausschnitt eines bedrohlichen")
+            })
+
+            val after = Json.decodeFromString(MarkedText.serializer(), tool("get_text", buildJsonObject {
+                put("documentId", documentId)
+                put("changeStatus", "AFTER")
+            }))
+            assertThat(after.text.trim()).isEqualTo(
+                "Lonn war im Begriff etwas zu sagen, er verkniff sich aber seine Vermutung über das Mal. " +
+                    "Er sah nur einen Ausschnitt eines bedrohlichen Kunstwerks der Natur, welches sich mit " +
+                    "Sicherheit über weit mehr als nur den Oberschenkel erstreckte."
+            )
+        }
+    }
 }
