@@ -1,18 +1,18 @@
 # LibreKollab
 
-Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, manage comments, and read embedded images — all via in-process UNO.
+Kotlin LibreOffice extension (.oxt) that exposes document editing as MCP tools. The extension runs inside LibreOffice's JVM, starts an MCP server over SSE and Streamable HTTP, and lets Claude Code read text, navigate chapters/pages, edit text with tracked changes, manage comments, and read embedded images — all via in-process UNO.
 
 ## Architecture
 
 ```
 Claude Code CLI
-      │  MCP (SSE, localhost:8080)
+      │  MCP (SSE / Streamable HTTP, localhost:8080)
 LibreKollab OXT extension
       │  in-process UNO (no socket in production)
 LibreOffice document(s)
 ```
 
-The extension implements `XJob` and is registered via `Jobs.xcu` to run on `onFirstVisibleTask`. `execute()` is a no-op — it only logs that the plugin is ready. The MCP server is **not** started automatically; the user starts it manually from the Options dialog (`Extras > Optionen > Internet > MCP Server`). `McpServer.startSse()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later. An `AtomicBoolean` guard prevents double-start.
+The extension implements `XJob` and is registered via `Jobs.xcu` to run on `onFirstVisibleTask`. `execute()` is a no-op — it only logs that the plugin is ready. The MCP server is **not** started automatically; the user starts it manually from the Options dialog (`Extras > Optionen > Internet > MCP Server`). `McpServer.startHttp()` launches a Ktor/Netty server non-blocking (`wait = false`) and returns an `EmbeddedServer<*, *>` so the plugin can stop it later. An `AtomicBoolean` guard prevents double-start.
 
 `documentId` is the file name of a currently open document in LibreOffice (e.g. `report.odt`). `LibreKollab` resolves it by enumerating `XDesktop.getComponents()`.
 
@@ -103,7 +103,7 @@ Feature-specific UNO logic lives under `adapter/libreoffice/component/`, injecte
 
 ## OXT packaging
 
-The extension is built by `./gradlew oxt` → `build/oxt/LibreKollab-1.0.0.oxt`.
+The extension is built by `./gradlew oxt` → `build/oxt/LibreKollab-1.1.0.oxt`.
 
 ```
 LibreKollab.oxt (ZIP)
@@ -126,7 +126,7 @@ LibreKollab.oxt (ZIP)
 - `running: AtomicBoolean` — `compareAndSet(false, true)` in `start()` prevents double-start
 - `engine: EmbeddedServer<*, *>?` — holds the running Ktor server
 - `instance: LibreKollabPlugin?` — stored in `init { instance = this }` so `OptionsHandler` can call `start()` / `close()`
-- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads and parses `librekollab.port` (default `8080`) to an `Int` *before* the `compareAndSet(false, true)` guard, so a non-numeric value (bypassing the dialog, e.g. an externally-set system property) throws before `running` is touched, instead of leaving it stuck at `true` with nothing actually started. Only then creates `LibreKollab` + `McpServer` and calls `startSse(port)`, wrapped in a `try/catch (IOException)` that resets `running` back to `false` before rethrowing — so a genuine bind failure (e.g. the port already in use by something else entirely) doesn't leave `running` stuck `true` with no server actually listening, mirroring the parse-failure fix above but for the bind step instead of the parse step.
+- `start()` — companion method; called by `OptionsHandler` when the user clicks "Start server". Reads and parses `librekollab.port` (default `8080`) to an `Int` *before* the `compareAndSet(false, true)` guard, so a non-numeric value (bypassing the dialog, e.g. an externally-set system property) throws before `running` is touched, instead of leaving it stuck at `true` with nothing actually started. Only then creates `LibreKollab` + `McpServer` and calls `startHttp(port)`, wrapped in a `try/catch (IOException)` that resets `running` back to `false` before rethrowing — so a genuine bind failure (e.g. the port already in use by something else entirely) doesn't leave `running` stuck `true` with no server actually listening, mirroring the parse-failure fix above but for the bind step instead of the parse step.
 - `close()` — stops the engine, sets `engine = null`, resets `running` to `false`
 - `__getComponentFactory(implementationName)` — JVM static factory required by UNO; dispatches both `LibreKollabPlugin` and `OptionsHandler` by implementation name
 
@@ -293,7 +293,7 @@ For manual plugin testing: build the OXT, install it in a local LibreOffice, sta
 
 ```bash
 ./gradlew oxt
-# → build/oxt/LibreKollab-1.0.0.oxt
+# → build/oxt/LibreKollab-1.1.0.oxt
 ```
 
 Install via `Extras > Extension Manager > Add...`, restart LibreOffice, then open the Options dialog (`Extras > Optionen > Internet > MCP Server`) and click **Start server**.
@@ -303,3 +303,7 @@ Register the MCP server in Claude Code:
 ```bash
 claude mcp add --transport sse --scope user librekollab http://localhost:8080/sse
 ```
+
+## HTTP transports
+
+`McpServer.startHttp(port)` serves both legacy SSE at `/sse` and stateful Streamable HTTP at `/mcp` on the same localhost port. `mcpStreamableHttp` installs the MCP content negotiation and SSE plugins; the legacy SSE route is registered afterward. Both factories build their own MCP server/session with the same tool registration and shared `KollabAPI`. The project uses MCP Kotlin SDK 0.15.0 (Streamable HTTP support was already available in 0.13.0). Start/stop controls manage both endpoints together.

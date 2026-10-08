@@ -41,7 +41,7 @@ class LibreKollabPlugin(private val context: XComponentContext) : XJob, XService
                 log.info("Starting MCP server on port {}", port)
                 val kollab = LoggingKollabAPI(LibreKollab(inst.context))
                 try {
-                    engine = McpServer(kollab).startSse(port)
+                    engine = McpServer(kollab).startHttp(port)
                 } catch (e: IOException) {
                     running.set(false)
                     throw e

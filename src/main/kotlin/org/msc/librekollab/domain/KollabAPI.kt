@@ -10,9 +10,9 @@ import org.msc.librekollab.domain.model.image.ImageMeta
 import org.msc.librekollab.domain.model.text.MarkedText
 
 /**
- * Central port of LibreKollab. Exposes LibreOffice document editing as MCP tools over SSE.
+ * Central port of LibreKollab. Exposes LibreOffice document editing as MCP tools over SSE and Streamable HTTP.
  *
- * Build: ./gradlew oxt  →  build/oxt/LibreKollab-1.0.0.oxt
+ * Build: ./gradlew oxt  →  build/oxt/LibreKollab-1.1.0.oxt
  */
 interface KollabAPI {
     companion object {

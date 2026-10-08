@@ -3,12 +3,11 @@ package org.msc.librekollab.adapter.mcp
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import io.ktor.server.application.install
 import io.ktor.server.routing.routing
-import io.ktor.server.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
+import io.modelcontextprotocol.kotlin.sdk.server.mcpStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
@@ -51,6 +50,8 @@ class McpServer(
 
     companion object {
         private const val LOCALHOST_HOST = "127.0.0.1"
+        private const val SSE_PATH = "/sse"
+        private const val STREAMABLE_HTTP_PATH = "/mcp"
         private const val PNG_MIME_TYPE = "image/png"
 
         // Default Json() has encodeDefaults = false, which omits any property whose value equals
@@ -59,11 +60,13 @@ class McpServer(
         private val json = Json { encodeDefaults = true }
     }
 
-    fun startSse(port: Int): EmbeddedServer<*, *> {
+    fun startHttp(port: Int): EmbeddedServer<*, *> {
         return embeddedServer(Netty, port = port, host = LOCALHOST_HOST) {
-            install(SSE)
+            mcpStreamableHttp(path = STREAMABLE_HTTP_PATH) {
+                buildServer().also { registerTools(it) }
+            }
             routing {
-                mcp("/sse") {
+                mcp(SSE_PATH) {
                     buildServer().also { registerTools(it) }
                 }
             }
@@ -84,7 +87,7 @@ class McpServer(
     }
 
     private fun buildServer() = Server(
-        serverInfo = Implementation(name = "librekollab", version = "1.0.0"),
+        serverInfo = Implementation(name = "librekollab", version = "1.1.0"),
         options = ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false)))
     )
 

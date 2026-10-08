@@ -25,7 +25,7 @@ The extension embeds an MCP server inside LibreOffice itself and exposes the ope
 
 ```
 MCP client (e.g. Claude Code)
-      │  MCP (SSE, localhost:8080)
+      │  MCP (SSE / Streamable HTTP, localhost:8080)
 LibreKollab OXT extension
       │  in-process UNO
 LibreOffice document(s)
@@ -46,7 +46,7 @@ The extension runs inside LibreOffice's JVM — no external server, no Docker, n
 ./gradlew oxt
 ```
 
-The extension is written to `build/oxt/LibreKollab-1.0.0.oxt`.
+The extension is written to `build/oxt/LibreKollab-1.1.0.oxt`.
 
 ### Install in LibreOffice
 
@@ -67,6 +67,17 @@ claude mcp add --transport sse --scope user librekollab http://localhost:8080/ss
 ```
 
 This registers the server globally for all your Claude Code sessions.
+
+The same server also exposes Streamable HTTP at `http://localhost:8080/mcp`.
+Both endpoints start and stop together and provide the same tools.
+For Codex, configure `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.liberekollab]
+url = "http://localhost:8080/mcp"
+```
+
+Restart the Codex client after changing its MCP configuration.
 
 ## Settings
 
@@ -149,7 +160,7 @@ cp /usr/lib/libreoffice/program/classes/libreoffice.jar libs/uno/
 
 ## Tech stack
 
-- **Kotlin** + **Ktor** (Netty, SSE transport)
+- **Kotlin** + **Ktor** (Netty, SSE and Streamable HTTP transports)
 - **MCP Kotlin SDK** (`io.modelcontextprotocol:kotlin-sdk`)
 - **LibreOffice** UNO in-process API
 - **Testcontainers** for integration tests

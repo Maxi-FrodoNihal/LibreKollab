@@ -1,16 +1,16 @@
 plugins {
-    kotlin("jvm") version "2.4.0"
-    kotlin("plugin.serialization") version "2.4.0"
+    kotlin("jvm") version "2.4.20"
+    kotlin("plugin.serialization") version "2.4.20"
 }
 
 group = "org.msc.librekollab"
-version = "1.0.0"
+version = "1.1.0"
 
 kotlin {
     jvmToolchain(25)
 }
 
-val ktorVersion = "3.5.1"
+val ktorVersion = "3.5.2"
 val testcontainersVersion = "2.0.5"
 val unoLibPath = "libs/uno"
 
@@ -25,11 +25,11 @@ dependencies {
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-sse:$ktorVersion")
-    implementation("ch.qos.logback:logback-classic:1.5.37")
+    implementation("ch.qos.logback:logback-classic:1.6.5")
 
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
-    implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
-    implementation("com.github.ben-manes.caffeine:caffeine:3.2.4")
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.15.0")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.3.0")
 
     testImplementation(kotlin("test"))
     testImplementation("org.testcontainers:testcontainers:$testcontainersVersion")
